@@ -1,0 +1,13 @@
+{
+  "name": "perpustakaandigital-workspace",
+  "private": true,
+  "scripts": {
+    "typecheck:backend": "tsc --noEmit -p backend/tsconfig.json",
+    "typecheck:frontend": "tsc --noEmit -p frontend/tsconfig.json",
+    "typecheck:mobile": "tsc --noEmit -p mobile/tsconfig.json",
+    "typecheck:all": "npm run typecheck:backend && npm run typecheck:frontend && npm run typecheck:mobile"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

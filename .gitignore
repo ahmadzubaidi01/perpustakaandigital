@@ -1,0 +1,13 @@
+# Perpustakaan Digital
+node_modules/
+dist/
+.next/
+.env
+.env.local
+.env.*.local
+*.log
+logs/
+uploads/
+.DS_Store
+*.tgz
+coverage/

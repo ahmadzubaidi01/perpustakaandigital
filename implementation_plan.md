@@ -1,0 +1,1031 @@
+# ANTIGRAVITY IMPLEMENTATION PLAN — CROSSPLATFORM LIBRARY MANAGEMENT SYSTEM
+
+Build a complete modern crossplatform library management system without reducing, removing, simplifying, or ignoring any requirement below.
+
+The system MUST be production-ready, scalable, responsive, modular, secure, and fully functional.
+
+The implementation MUST preserve ALL features, ALL hierarchy systems, ALL permissions, ALL QR systems, ALL database structures, ALL UI rules, and ALL architectural requirements exactly as specified.
+
+DO NOT reduce functionality.
+DO NOT simplify architecture.
+DO NOT skip responsive behavior.
+DO NOT replace technologies.
+DO NOT use gradients.
+DO NOT create generic database IDs.
+DO NOT remove any role hierarchy.
+DO NOT merge QR identity between physical books.
+
+==================================================
+
+# CORE STACK
+
+Frontend Website:
+* Next.js
+* App Router
+* Tailwind CSS
+* Responsive UI
+* SSR support
+* PWA support
+
+Mobile Android:
+* React Native Expo
+* Native camera access
+* Native GPS access
+* Push notification support (FCM)
+* QR scanning support
+
+Backend:
+* Node.js
+* Express.js
+* REST API architecture
+* JWT authentication
+* RBAC permission system
+* Redis Caching
+
+Database:
+* MySQL
+* phpMyAdmin compatibility
+
+==================================================
+
+# CROSSPLATFORM REQUIREMENTS
+
+The system MUST support:
+* Desktop browsers
+* Mobile browsers
+* Android devices
+* PWA mode
+* Cross browser compatibility
+
+Must work properly on:
+* Google Chrome
+* Mozilla Firefox
+* Microsoft Edge
+* Safari
+* Opera
+* Android browser
+
+==================================================
+
+# PERFORMANCE REQUIREMENT
+
+The system MUST remain performant with:
+* 100,000+ books
+* 1,000,000+ QR scans
+* 100,000+ users
+
+==================================================
+
+# MULTI LEVEL ROLE HIERARCHY
+
+Implement complete role hierarchy.
+
+## SUPER ADMIN
+Must have:
+* Full system access
+* Access to all regions
+* Full monitoring
+* Full analytics
+* Full user management
+* Full audit logs
+* Full backup access
+* Full QR management
+* Full book management
+* Full school management
+* Full notification management
+* Full database monitoring
+* Full reset password access
+
+## REGENCY ADMIN
+Must have:
+* Full access inside assigned regency
+* Manage district admins
+* Manage schools inside region
+* Manage books inside region
+* Monitor all activities in region
+
+Restrictions:
+* Cannot access other regencies
+* Cannot access super admin area
+
+## DISTRICT ADMIN
+Must have:
+* Full access inside assigned district
+* Manage school admins
+* Monitor district activities
+* Manage district books
+
+Restrictions:
+* Cannot access other districts
+* Cannot access higher regional data
+
+## SCHOOL ADMIN
+Must have:
+* Full access inside assigned school
+* Manage students
+* Manage books
+* Manage QR books
+* Manage borrowing
+* Scan QR books
+* Generate reports
+
+Restrictions:
+* Cannot access other schools
+
+## STUDENT MEMBER
+Must have:
+* Login
+* View books
+* Borrow books
+* Reserve books
+* Return books
+* View history
+* Scan QR
+* Receive notifications
+* Manage own profile
+
+==================================================
+
+# BOOK MANAGEMENT SYSTEM
+
+Must implement:
+* Add books
+* Edit books
+* Delete books
+* Book categories
+* Authors
+* Publishers
+* ISBN
+* Publication year
+* Book cover upload
+* Rack management
+* Stock management
+* available_stock MUST always sync automatically with borrowings and returns
+* Book location management
+* Excel import/export
+* PDF export
+
+Data Integrity:
+* book_code MUST remain unique across all books.
+
+==================================================
+
+# UNIQUE QR SYSTEM FOR EVERY PHYSICAL BOOK
+
+Every physical book MUST have a UNIQUE QR.
+Even if books share the same title:
+* Every physical copy MUST have different QR
+* Every physical copy MUST have different serial identity
+* Every QR MUST be stored in database
+* Every QR MUST be traceable
+* Every QR MUST preserve borrowing history
+* QR serial numbers MUST be immutable after creation.
+* qr_uuid MUST use UUID v4 format.
+* A physical book QR MUST NOT be borrowed simultaneously by multiple users.
+
+Example:
+* Mathematics Book Copy 1 → QR001
+* Mathematics Book Copy 2 → QR002
+* Mathematics Book Copy 3 → QR003
+
+QR requirements:
+* Auto generate QR
+* Download QR
+* Print QR
+* QR validation
+* QR encryption
+* Anti duplicate QR
+* QR activity logs
+* QR location tracking
+* QR scan history
+
+==================================================
+
+# CAMERA QR SCANNER
+
+The system MUST support:
+* Realtime QR scanning
+* Camera access
+* Front camera
+* Back camera
+* Flashlight support
+* Multi scan support
+* Fast scan detection
+
+Recommended libraries:
+* html5-qrcode
+* react-qr-scanner
+* expo-camera
+
+QR scan must support:
+* Borrowing
+* Returning
+* Verification
+* Inventory tracking
+* Audit scanning
+
+==================================================
+
+# GPS / LOCATION SYSTEM
+
+The application MUST support:
+* Device GPS access
+* Store scan location
+* Store user location
+* Track QR scan coordinates
+* Library location display
+* Activity location logs
+
+Store:
+* latitude
+* longitude
+* location name
+* scan timestamp
+* scanner identity
+
+Recommended:
+* Geolocation API
+* Expo Location
+* Google Maps API
+
+==================================================
+
+# BORROWING SYSTEM
+
+Must support:
+* Borrow books
+* Return books
+* Extend borrowing
+* Reserve books
+* Borrowing limits
+* Late penalties
+* Penalty payment tracking
+* Borrowing history
+* Due date notifications
+
+Book statuses:
+* available
+* borrowed
+* reserved
+* damaged
+* lost
+* maintenance
+
+Data Integrity:
+* borrowing_code MUST remain globally unique.
+
+==================================================
+
+# STUDENT MEMBER SYSTEM
+
+Must support:
+* Student registration
+* Login system
+* Digital member card
+* Member QR
+* Borrow history
+* Favorite books
+* Reviews
+* Ratings
+* Notifications
+
+Student data:
+* Student ID Number (NIS/NISN)
+* Full name
+* Class Name
+* School
+* Photo
+* Phone number
+* Email
+
+Data Integrity:
+* member_qr_uuid MUST use UUID v4 format.
+
+==================================================
+
+# NOTIFICATION SYSTEM
+
+Notification types:
+* Due date reminder
+* Late return warning
+* Book available notification
+* Account verification
+* School announcements
+
+Notification channels:
+* Push notifications (via FCM)
+* Email
+* In-app notifications
+* Optional WhatsApp gateway
+
+Notifications MUST support realtime delivery.
+
+==================================================
+
+# ADMIN DASHBOARD
+
+## SUPER ADMIN DASHBOARD
+Must include:
+* Total books
+* Total schools
+* Total students
+* Total borrowings
+* Region analytics
+* Activity graphs
+* Online users
+* Audit logs
+* Redis-cached statistics
+
+## SCHOOL ADMIN DASHBOARD
+Must include:
+* Borrowed books
+* Available books
+* Daily activity
+* Popular books
+* Top borrowers
+
+==================================================
+
+# UI/UX RULES
+
+MANDATORY:
+* NO gradients
+* Modern flat design
+* Clean layout
+* Responsive layout
+* Mobile-first UI
+* Modern cards
+* Modern tables
+* Modern modals
+* Modern notification system
+* Modern sidebar
+* Rounded modern components
+* Light shadows only
+
+==================================================
+
+# COLOR RULES
+
+Use ONLY:
+* Blue
+* Yellow
+* Green
+* White
+
+DO NOT use gradients.
+DO NOT use neon effects.
+DO NOT use glassmorphism.
+
+==================================================
+
+# ICON SYSTEM
+
+Use modern icons:
+* Lucide Icons
+* Heroicons
+* Material Icons
+
+==================================================
+
+# FRONTEND REQUIREMENTS
+
+Frontend MUST use:
+* Next.js
+* Tailwind CSS
+* Axios
+* React Query
+* Zustand
+* React Hook Form
+* Zod
+* Framer Motion
+
+Frontend MUST be:
+* Responsive
+* Accessible
+* Optimized
+* Fast
+* SEO friendly
+
+==================================================
+
+# MOBILE REQUIREMENTS
+
+Android app MUST support:
+* QR camera scanning
+* GPS access
+* Notifications
+* APK build
+* Native-like performance
+
+Use:
+* Expo Camera
+* Expo Location
+* Expo Notifications
+* React Navigation
+* Zustand
+
+==================================================
+
+# BACKEND REQUIREMENTS
+
+Backend MUST implement:
+* REST API
+* JWT authentication
+* Refresh token system
+* Role permission system
+* Upload management
+* QR generation
+* Activity logging
+* Rate limiting
+* Validation system
+* Audit system
+* Redis caching for analytics
+
+API & Architecture Rules:
+* The system MUST support environment-based configuration management.
+* Critical borrowing and returning operations MUST use database transactions.
+* Borrowing operations MUST implement concurrency-safe locking mechanisms.
+* All APIs MUST follow RESTful naming conventions.
+* All APIs MUST support versioning. Example: `/api/v1/...`
+* All API responses MUST include: success status, message, data payload, error payload, metadata.
+* List APIs MUST support pagination, filtering, and sorting.
+* The system MUST implement centralized error handling.
+* Redis cache invalidation MUST occur automatically after data mutations.
+* Redis caching MUST NOT serve stale borrowing or stock data.
+* Audit logs and QR scan logs MUST support configurable retention policies.
+* Audit logs MUST preserve original primary key references.
+
+Recommended libraries:
+* Express.js
+* Sequelize or Prisma
+* bcrypt
+* JWT
+* Multer
+* qrcode
+* socket.io
+* nodemailer
+* redis
+* firebase-admin (FCM)
+
+==================================================
+
+# DATABASE RULES
+
+STRICT RULE:
+Every table MUST use unique primary key naming.
+
+DO NOT use generic primary key names like: id.
+DO NOT use Indonesian formats like: id_buku or id_user.
+
+Use strictly fully English suffix format:
+* user_id
+* book_id
+* book_qr_id
+* borrowing_id
+* school_id
+* district_id
+* regency_id
+* notification_id
+* log_id
+* review_id
+* category_id
+* session_id
+* scan_log_id
+* favorite_id
+* reset_id
+
+Foreign keys MUST also follow consistent English suffix naming (e.g., `approved_by_user_id`).
+All foreign keys MUST enforce relational integrity.
+Cascade deletion MUST NOT remove audit logs.
+
+==================================================
+
+# ENTERPRISE DATABASE STANDARDIZATION
+
+The implementation MUST apply enterprise-grade database architecture standards without reducing any existing requirement.
+
+All database fields MUST:
+* use snake_case naming
+* use fully English naming conventions
+* avoid generic field names
+* remain scalable for large development teams
+* remain safe for long-term maintenance
+* remain consistent across all modules
+
+==================================================
+
+# ENTERPRISE TIMESTAMP STANDARDIZATION
+
+Every table MUST include:
+* created_at
+* updated_at
+
+Every table that supports soft delete MUST also include:
+* deleted_at
+
+Soft-deleted data MUST remain recoverable by Super Admin.
+
+==================================================
+
+# FILE STORAGE STANDARDIZATION
+
+All uploaded media/files MUST use separated file fields.
+
+Use:
+* cover_image_url
+* profile_photo_url
+* qr_image_url
+
+DO NOT use generic file fields like:
+* image
+* photo
+* cover
+
+Uploaded files MUST validate:
+* file type
+* file size
+* malicious content
+* MIME type validation
+* executable payload detection
+
+==================================================
+
+# ENUM STANDARDIZATION
+
+All statuses MUST use explicit enum naming.
+To prevent unauthorized or random values, all fields mapping to these enums MUST strictly use their respective enums:
+* school_status MUST strictly use the school_status enum.
+* user_role MUST strictly use the user_role enum.
+* account_status MUST strictly use the account_status enum.
+* borrowing_status MUST strictly use the borrowing_status enum.
+* book_status MUST strictly use the book_status enum.
+* qr_status MUST strictly use the qr_status enum.
+* penalty_status MUST strictly use the penalty_status enum.
+* scan_type MUST strictly use the scan_type enum.
+* notification_type MUST strictly use the notification_type enum.
+* session_status MUST strictly use the session_status enum.
+
+## borrowing_status
+* pending
+* approved
+* borrowed
+* reserved
+* returned
+* late
+* cancelled
+
+## book_status
+* available
+* borrowed
+* reserved
+* damaged
+* lost
+* maintenance
+
+## account_status
+* active
+* inactive
+* suspended
+
+## qr_status
+* active
+* inactive
+* damaged
+* lost
+
+## penalty_status
+* unpaid
+* paid
+* waived
+
+## school_status
+* active
+* inactive
+* suspended
+
+## user_role
+* super_admin
+* regency_admin
+* district_admin
+* school_admin
+* student_member
+
+## scan_type
+* borrowing
+* returning
+* verification
+* inventory
+* audit
+
+## notification_type
+* due_reminder
+* late_warning
+* availability_notice
+* account_verification
+* school_announcement
+* system_alert
+
+## session_status
+* active
+* expired
+* revoked
+* terminated
+
+==================================================
+
+# FULLY CORRECTED ENTERPRISE DATABASE STRUCTURE
+
+## regencies
+* regency_id
+* regency_name
+* created_at
+* updated_at
+
+## districts
+* district_id
+* regency_id
+* district_name
+* created_at
+* updated_at
+
+## schools
+* school_id
+* district_id
+* regency_id
+* school_name
+* school_address
+* school_status
+* created_at
+* updated_at
+* deleted_at
+
+## book_categories
+* category_id
+* category_name
+* category_slug
+* created_at
+* updated_at
+* deleted_at
+
+## users
+* user_id
+* student_id_number
+* full_name
+* email_address
+* password_hash
+* phone_number
+* profile_photo_url
+* class_name
+* member_qr_uuid
+* user_role
+* account_status
+* last_login_at
+* created_at
+* updated_at
+* deleted_at
+* school_id
+* district_id
+* regency_id
+
+## books
+* book_id
+* book_code
+* book_title
+* book_slug
+* book_description
+* author_name
+* publisher_name
+* isbn_code
+* publication_year
+* category_id
+* rack_location
+* total_stock
+* available_stock
+* borrowed_stock
+* cover_image_url
+* book_status
+* created_at
+* updated_at
+* deleted_at
+
+## book_qr
+* book_qr_id
+* book_id
+* qr_uuid
+* qr_serial_number
+* qr_image_url
+* qr_status
+* last_scanned_at
+* last_scanned_latitude
+* last_scanned_longitude
+* last_scanned_by_user_id
+* created_at
+* updated_at
+
+## borrowings
+* borrowing_id
+* borrowing_code
+* user_id
+* book_qr_id
+* borrowed_at
+* due_date
+* returned_at
+* late_penalty_amount
+* penalty_status
+* borrowing_status
+* approved_by_user_id
+* created_at
+* updated_at
+
+## book_reviews
+* review_id
+* book_id
+* user_id
+* rating_score
+* review_text
+* created_at
+* updated_at
+* deleted_at
+
+## favorite_books
+* favorite_id
+* user_id
+* book_id
+* created_at
+* updated_at
+* deleted_at
+
+## password_resets
+* reset_id
+* email_address
+* reset_token
+* expired_at
+* created_at
+* updated_at
+
+## notifications
+* notification_id
+* user_id
+* notification_title
+* notification_message
+* notification_type
+* is_read
+* sent_at
+* created_at
+* updated_at
+* deleted_at
+
+## audit_logs
+* log_id
+* action_type
+* table_name
+* affected_record_id
+* old_value
+* new_value
+* performed_by
+* device_info
+* ip_address
+* created_at
+
+## user_sessions
+* session_id
+* user_id
+* device_name
+* device_type
+* ip_address
+* login_at
+* expired_at
+* session_status
+* deleted_at
+
+## qr_scan_logs
+* scan_log_id
+* book_qr_id
+* scanned_by_user_id
+* scan_type
+* latitude
+* longitude
+* device_info
+* scanned_at
+* created_at
+* updated_at
+
+==================================================
+
+# SECURITY HARDENING
+
+The system MUST include:
+* session management
+* device tracking
+* IP address tracking
+* refresh token strategy
+* rate limit architecture
+* secure JWT flow
+* bcrypt password hashing
+* permission validation
+* role validation
+* activity logging
+
+Session & Reset Security Rules:
+* Expired sessions MUST be invalidated automatically.
+* Concurrent session limits MUST be configurable.
+* Reset tokens MUST be securely hashed before database storage.
+* reset token hashing MUST use cryptographically secure hashing algorithms.
+* Reset tokens MUST expire automatically.
+* Reset tokens MUST be single-use only.
+* password_hash MUST use bcrypt with configurable salt rounds.
+
+Environment & Secret Rules:
+* JWT secrets MUST NOT be hardcoded.
+* Environment variables MUST be used for all sensitive credentials.
+
+Audit logs MUST be immutable and non-editable.
+
+Rate limiting MUST apply to:
+* authentication endpoints
+* QR scan endpoints
+* notification endpoints
+* password reset endpoints
+
+==================================================
+
+# INDEXING STRATEGY
+
+The database MUST implement:
+* unique indexes
+* foreign key indexes
+* activity indexes
+* timestamp indexes
+* QR lookup optimization indexes
+
+Required indexes:
+* unique index qr_uuid
+* unique index isbn_code
+* isbn_code uniqueness MUST ignore NULL values.
+* index school_id
+* index district_id
+* index regency_id
+* index borrowing_status
+* index penalty_status
+* index created_at
+* index user_id
+* index book_id
+* index qr_serial_number
+* index user_role
+* composite index (book_id, borrowing_status)
+* composite index (user_id, borrowing_status)
+
+==================================================
+
+# PROJECT STRUCTURE
+
+## FRONTEND
+/frontend
+* app
+* components
+* hooks
+* services
+* store
+* utils
+* styles
+* public
+
+## BACKEND
+/backend
+* controllers
+* routes
+* middleware
+* models
+* services
+* uploads
+* logs
+* utils
+* config
+
+==================================================
+
+# BORROWING FLOW
+
+1. Student login
+2. Scan book QR
+3. System validation
+4. Admin approval
+5. Borrow success
+6. Store borrowing history
+7. Auto-sync available_stock
+
+==================================================
+
+# RETURN FLOW
+
+1. Scan QR
+2. Check delay
+3. Calculate penalty
+4. Update penalty_status if penalty exists
+5. Return book
+6. Update status available
+7. Auto-sync available_stock
+
+==================================================
+
+# DEPLOYMENT
+
+Server stack:
+* Ubuntu VPS
+* NGINX
+* PM2
+* Node.js
+* MySQL
+* Redis
+* SSL HTTPS
+
+Automatic scheduled database backups MUST be supported.
+
+==================================================
+
+# FINAL RESULT TARGET
+
+The final system MUST be:
+* Modern
+* Fast
+* Secure
+* Stable
+* Scalable
+* Responsive
+* Crossplatform
+* Production-ready
+* Multi region
+* Multi school
+* Capable of handling thousands of books
+* Capable of handling thousands of users
+* Fully responsive on all devices
+* Fully functional QR ecosystem
+* Realtime camera scanning
+* GPS enabled
+* Multi admin hierarchy
+* Modern UI without gradients
+* Browser compatible
+
+==================================================
+
+# IMPORTANT IMPLEMENTATION RULES
+
+NEVER:
+* Remove requirements
+* Reduce features
+* Simplify role hierarchy
+* Replace QR uniqueness
+* Ignore GPS functionality
+* Ignore mobile support
+* Ignore responsive behavior
+* Ignore browser compatibility
+* Use gradients
+* Use generic database IDs
+* Break hierarchy permissions
+* Merge physical book identities
+
+ALWAYS:
+* Preserve all architecture
+* Preserve all security layers
+* Preserve all permissions
+* Preserve all QR history
+* Preserve all database consistency
+* Preserve scalability
+* Preserve production quality
+* Preserve modular structure
+* Preserve maintainability
+* Preserve responsive design
+* Preserve crossplatform behavior
+* Preserve modern UI quality
+
+==================================================
+
+# FINAL ENTERPRISE REQUIREMENT
+
+The final architecture MUST remain:
+* enterprise-grade
+* scalable
+* maintainable
+* production-ready
+* audit-ready
+* secure
+* modular
+* normalized
+* backend-team friendly
+* future-proof
+* crossplatform-ready
+* antigravity-ready
+
+The implementation MUST preserve:
+* all hierarchy systems
+* all permissions
+* all QR systems
+* all GPS systems
+* all UI rules
+* all security layers
+* all responsive behaviors
+* all browser compatibility
+* all production standards
+* all database consistency
+* all modular architecture
+* all crossplatform functionality

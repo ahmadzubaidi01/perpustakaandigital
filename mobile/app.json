@@ -1,0 +1,53 @@
+{
+  "expo": {
+    "name": "Perpustakaan Digital",
+    "slug": "perpustakaan-digital",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0B1120"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Kamera diperlukan untuk scan QR code buku",
+        "NSLocationWhenInUseUsageDescription": "Lokasi digunakan untuk logging scan QR"
+      }
+    },
+    "android": {
+      "package": "com.perpustakaan.digital",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0B1120"
+      },
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "CAMERA",
+        "ACCESS_FINE_LOCATION"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Izinkan akses kamera untuk scan QR code"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Izinkan akses lokasi untuk logging scan"
+        }
+      ]
+    ]
+  }
+}
