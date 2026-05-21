@@ -11,3 +11,4 @@ uploads/
 .DS_Store
 *.tgz
 coverage/
+.env.production.example
