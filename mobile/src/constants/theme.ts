@@ -77,5 +77,5 @@ export const BorderRadius = {
 };
 
 export const API_BASE_URL = __DEV__
-  ? 'http://10.0.2.2:5000/api' // Android emulator → localhost
+  ? 'http://localhost:5000/api'
   : 'https://your-production-api.com/api';

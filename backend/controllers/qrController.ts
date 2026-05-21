@@ -1,13 +1,14 @@
 import { Request, Response } from 'express';
-import { Op } from 'sequelize';
-import { BookQr, Book, QrScanLog, Borrowing } from '../models';
-import { QrStatus, ScanType, AuditActionType, TABLE_NAMES, UserRole } from '../config/constants';
+import { Op, Transaction } from 'sequelize';
+import { sequelize, BookQr, Book, QrScanLog, Borrowing } from '../models';
+import { QrStatus, ScanType, AuditActionType, TABLE_NAMES, UserRole, BorrowingStatus } from '../config/constants';
 import apiResponse from '../utils/apiResponse';
 import { asyncHandler } from '../middleware/errorHandler';
 import { generateBookQrCodes, validateQrPayload, generateQrDataUrl } from '../services/qrService';
 import { createAuditLog, buildAuditFromRequest } from '../services/auditService';
 import { parsePaginationParams, buildPaginationResult } from '../utils/pagination';
 import { buildRegionalFilter } from '../middleware/rbac';
+import { syncBookStock } from '../services/stockSyncService';
 
 const listBookQrs = asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const pagination = parsePaginationParams(req, 'created_at', ['created_at', 'qr_serial_number', 'qr_status']);
@@ -56,9 +57,14 @@ const getBookQr = asyncHandler(async (req: Request, res: Response): Promise<void
 });
 
 const generateQrCodes = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const { book_id, quantity } = req.body;
+  const { book_id, quantity, custom_serial } = req.body;
   const book = await Book.findByPk(book_id);
   if (!book) { apiResponse.notFound(res, 'Book not found'); return; }
+
+  if (custom_serial && quantity !== 1) {
+    apiResponse.badRequest(res, 'Gagal: Pembuatan QR Code dengan nomor seri kustom hanya diperbolehkan untuk 1 salinan per transaksi.');
+    return;
+  }
 
   const existingQrCount = await BookQr.count({ where: { book_id: book.book_id } });
   if (existingQrCount + quantity > book.total_stock) {
@@ -66,15 +72,23 @@ const generateQrCodes = asyncHandler(async (req: Request, res: Response): Promis
     return;
   }
 
-  const qrCodes = await generateBookQrCodes(book.book_id, book.school_id, quantity);
-  const createdQrs = [];
-  for (const qr of qrCodes) {
-    const created = await BookQr.create({ book_id: book.book_id, qr_uuid: qr.qr_uuid, qr_serial_number: qr.qr_serial_number, qr_image_url: qr.qr_image_url });
-    createdQrs.push(created);
-  }
+  try {
+    const qrCodes = await generateBookQrCodes(book.book_id, book.school_id, quantity, custom_serial || undefined);
+    const createdQrs = [];
+    for (const qr of qrCodes) {
+      const created = await BookQr.create({ book_id: book.book_id, qr_uuid: qr.qr_uuid, qr_serial_number: qr.qr_serial_number, qr_image_url: qr.qr_image_url });
+      createdQrs.push(created);
+    }
 
-  await createAuditLog(buildAuditFromRequest(req, AuditActionType.GENERATE_QR, TABLE_NAMES.BOOK_QR, book.book_id, null, { quantity, serial_numbers: qrCodes.map(q => q.qr_serial_number) }));
-  apiResponse.created(res, `${quantity} QR codes generated`, createdQrs);
+    await createAuditLog(buildAuditFromRequest(req, AuditActionType.GENERATE_QR, TABLE_NAMES.BOOK_QR, book.book_id, null, { quantity, serial_numbers: qrCodes.map(q => q.qr_serial_number) }));
+    apiResponse.created(res, `${quantity} QR codes generated`, createdQrs);
+  } catch (err: any) {
+    if (err.statusCode === 400) {
+      apiResponse.badRequest(res, err.message);
+    } else {
+      throw err;
+    }
+  }
 });
 
 const scanQr = asyncHandler(async (req: Request, res: Response): Promise<void> => {
@@ -180,21 +194,79 @@ const getScanLogs = asyncHandler(async (req: Request, res: Response): Promise<vo
 });
 
 const deleteQrCode = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const qr = await BookQr.findByPk(req.params.book_qr_id as string);
-  if (!qr) { apiResponse.notFound(res, 'Book QR not found'); return; }
-  const activeBorrowing = await Borrowing.findOne({
-    where: {
-      book_qr_id: qr.book_qr_id,
-      borrowing_status: { [Op.in]: ['pending', 'borrowed', 'reserved'] }
+  const qrId = req.params.book_qr_id as string;
+
+  const result = await sequelize.transaction(async (t: Transaction) => {
+    // 1. Find the BookQr
+    const qr = await BookQr.findByPk(qrId, {
+      lock: t.LOCK.UPDATE,
+      transaction: t,
+    });
+    if (!qr) {
+      throw Object.assign(new Error('Book QR not found'), { statusCode: 404 });
     }
+
+    // 2. Find the associated Book
+    const book = await Book.findByPk(qr.book_id, {
+      lock: t.LOCK.UPDATE,
+      transaction: t,
+    });
+    if (!book) {
+      throw Object.assign(new Error('Associated book not found'), { statusCode: 404 });
+    }
+
+    // 3. Update all active borrowings associated with this QR to returned status
+    const activeBorrowings = await Borrowing.findAll({
+      where: {
+        book_qr_id: qr.book_qr_id,
+        borrowing_status: {
+          [Op.in]: [
+            BorrowingStatus.PENDING,
+            BorrowingStatus.APPROVED,
+            BorrowingStatus.BORROWED,
+            BorrowingStatus.LATE,
+            BorrowingStatus.RESERVED,
+          ],
+        },
+      },
+      transaction: t,
+    });
+
+    const now = new Date();
+    for (const borrowing of activeBorrowings) {
+      await borrowing.update(
+        {
+          borrowing_status: BorrowingStatus.RETURNED,
+          returned_at: now,
+        },
+        { transaction: t }
+      );
+    }
+
+    // 4. Soft delete the QR code
+    await qr.destroy({ transaction: t });
+
+    // 5. Decrement total_stock of the book by 1
+    const newTotalStock = Math.max(0, book.total_stock - 1);
+    const newAvailableStock = Math.min(book.available_stock, newTotalStock);
+    const newBorrowedStock = Math.max(0, newTotalStock - newAvailableStock);
+    await book.update(
+      {
+        total_stock: newTotalStock,
+        available_stock: newAvailableStock,
+        borrowed_stock: newBorrowedStock,
+      },
+      { transaction: t }
+    );
+
+    // 6. Recalculate and sync book stock
+    await syncBookStock(book.book_id, t);
+
+    return { qr, book };
   });
-  if (activeBorrowing) {
-    apiResponse.badRequest(res, 'Cannot delete QR code with active borrowings/reservations');
-    return;
-  }
-  await qr.destroy();
-  await createAuditLog(buildAuditFromRequest(req, AuditActionType.DELETE, TABLE_NAMES.BOOK_QR, qr.book_qr_id));
-  apiResponse.success(res, 'Book QR code deleted successfully');
+
+  await createAuditLog(buildAuditFromRequest(req, AuditActionType.DELETE, TABLE_NAMES.BOOK_QR, result.qr.book_qr_id));
+  apiResponse.success(res, 'Book QR code deleted successfully and associated borrowings closed');
 });
 
 export { listBookQrs, getBookQr, generateQrCodes, scanQr, updateQrStatus, getQrDownloadData, getScanLogs, deleteQrCode };

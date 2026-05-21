@@ -21,9 +21,19 @@ interface GeneratedQr {
 const generateBookQrCodes = async (
   bookId: number,
   schoolId: number,
-  quantity: number
+  quantity: number,
+  customSerial?: string
 ): Promise<GeneratedQr[]> => {
   const results: GeneratedQr[] = [];
+
+  if (customSerial) {
+    const existing = await BookQr.findOne({ where: { qr_serial_number: customSerial }, paranoid: false });
+    if (existing) {
+      const err = new Error('Nomor seri QR kustom sudah terdaftar di sistem');
+      (err as any).statusCode = 400;
+      throw err;
+    }
+  }
 
   // Get current count of QRs for this book to determine sequence
   const existingCount = await BookQr.count({ where: { book_id: bookId } });
@@ -38,7 +48,7 @@ const generateBookQrCodes = async (
   for (let i = 0; i < quantity; i++) {
     const copyIndex = existingCount + i + 1;
     const qrUuid = uuidv4();
-    const qrSerialNumber = generateQrSerialNumber(schoolId, bookId, copyIndex);
+    const qrSerialNumber = customSerial || generateQrSerialNumber(schoolId, bookId, copyIndex);
 
     // QR payload contains encrypted identification data
     const qrPayload = JSON.stringify({

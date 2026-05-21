@@ -39,6 +39,7 @@ const redactSensitive = winston.format((info) => {
 
 const logger = winston.createLogger({
   level: env.LOG_LEVEL,
+  exitOnError: false, // Prevents winston from forcefully crashing/exiting the process on uncaught exceptions
   format: winston.format.combine(
     redactSensitive(),
     winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),

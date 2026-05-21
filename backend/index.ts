@@ -1,3 +1,20 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
+import env from './config/environment';
+import logger from './utils/logger';
+
+// Global error handlers to prevent abrupt process termination
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception captured globally', { error: error.message, stack: error.stack });
+});
+
+process.on('unhandledRejection', (reason: any) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  const stack = reason instanceof Error ? reason.stack : undefined;
+  logger.error('Unhandled Rejection captured globally', { reason: msg, stack });
+});
+
 import express, { Application } from 'express';
 import http from 'http';
 import cors from 'cors';
@@ -5,16 +22,11 @@ import helmet from 'helmet';
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import path from 'path';
-import dotenv from 'dotenv';
 import fs from 'fs';
 import { initCronJobs } from './jobs/cron';
 
-dotenv.config();
-
-import env from './config/environment';
 import sequelize from './config/database';
 import { initRedis } from './config/redis';
-import logger from './utils/logger';
 import apiRoutes from './routes/index';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { initSocketService } from './services/socketService';
@@ -84,39 +96,99 @@ app.use(errorHandler);
 // Start server
 const startServer = async () => {
   try {
-    // Database connection
-    await sequelize.authenticate();
-    logger.info('Database connection established successfully');
+    // Startup check: Uploads folder permissions and directory existence validation
+    const uploadDir = path.resolve(__dirname, env.UPLOAD_DIR);
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+      logger.info('Created uploads storage directory');
+    }
 
-    // Redis connection (non-blocking — app works without Redis)
+    // Database connection with defensive auto-retry logic (5 times, 2s intervals)
+    let dbRetries = 5;
+    while (dbRetries > 0) {
+      try {
+        await sequelize.authenticate();
+        logger.info('Database connection established successfully');
+        break;
+      } catch (err: any) {
+        dbRetries -= 1;
+        logger.warn(`Database connection failed. Retries remaining: ${dbRetries}. Error: ${err.message}`);
+        if (dbRetries === 0) {
+          throw new Error(`Critical: Database connection failed after multiple retries. ${err.message}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+
+    // Redis connection (completely non-blocking background initial boot)
     if (env.REDIS_ENABLED) {
       try {
         await initRedis();
-        logger.info('Redis connection established successfully');
+        logger.info('Redis interface initialized in non-blocking background mode');
       } catch (redisError: any) {
-        logger.warn('Redis connection failed — running without cache', { error: redisError.message });
+        logger.warn('Redis non-blocking initialization skipped or failed', { error: redisError.message });
       }
     } else {
       logger.info('Redis caching is disabled by configuration');
     }
 
-    // Start listening
+    // Start listening HTTP Server
     httpServer.listen(env.PORT, () => {
       logger.info(`${env.APP_NAME} server running on port ${env.PORT} [${env.NODE_ENV}]`);
     });
 
     // Initialize Socket.IO real-time service
-    initSocketService(httpServer);
-    logger.info('Socket.IO real-time service initialized');
+    try {
+      initSocketService(httpServer);
+      logger.info('Socket.IO real-time service initialized successfully');
+    } catch (socketError: any) {
+      logger.error('Socket.IO server initialization failed', { error: socketError.message });
+    }
 
     // Initialize background jobs
-    initCronJobs();
+    try {
+      initCronJobs();
+      logger.info('Background cron jobs successfully registered');
+    } catch (cronError: any) {
+      logger.error('Background cron registration failed', { error: cronError.message });
+    }
   } catch (error: any) {
-    logger.error('Failed to start server', { error: error.message });
+    logger.error('Failed to start server cleanly', { error: error.message, stack: error.stack });
     process.exit(1);
   }
 };
 
+// Graceful shutdown handling
+const gracefulShutdown = async (signal: string) => {
+  logger.info(`Received ${signal}. Initiating graceful shutdown sequence...`);
+
+  // Force shutdown backup timer (10s)
+  const shutdownTimer = setTimeout(() => {
+    logger.error('Graceful shutdown timeout exceeded, forcing process exit');
+    process.exit(1);
+  }, 10000);
+
+  // Close HTTP and Socket.IO server
+  httpServer.close(async () => {
+    logger.info('HTTP and WebSocket servers shut down cleanly');
+
+    // Close Database pool connections
+    try {
+      await sequelize.close();
+      logger.info('Sequelize database connection pool successfully closed');
+    } catch (err: any) {
+      logger.error('Error closing database connections during shutdown', { error: err.message });
+    }
+
+    clearTimeout(shutdownTimer);
+    logger.info('Graceful shutdown completed successfully. Good bye!');
+    process.exit(0);
+  });
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
 startServer();
 
-export default app;
+export default app; // Trigger nodemon restart after starting MySQL database server

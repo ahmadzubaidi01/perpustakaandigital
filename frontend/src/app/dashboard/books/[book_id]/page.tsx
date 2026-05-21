@@ -27,6 +27,7 @@ export default function BookDetailPage() {
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [genQty, setGenQty] = useState(1);
+  const [customSerial, setCustomSerial] = useState('');
   const [generating, setGenerating] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
 
@@ -63,8 +64,9 @@ export default function BookDetailPage() {
     if (genQty < 1) return;
     setGenerating(true);
     try {
-      await qrAPI.generate({ book_id: bookId, quantity: genQty });
+      await qrAPI.generate({ book_id: bookId, quantity: genQty, custom_serial: customSerial.trim() || undefined });
       toast.success(`${genQty} QR code berhasil dibuat!`);
+      setCustomSerial('');
       setShowGenerate(false);
       fetchBook();
     } catch (err: any) {
@@ -241,7 +243,20 @@ export default function BookDetailPage() {
 
         {/* Generate QR inline */}
         {showGenerate && (
-          <div className="p-4 rounded-xl mb-4 flex flex-col sm:flex-row items-end gap-3 bg-[var(--accent)] border border-border">
+          <div className="p-4 rounded-xl mb-4 flex flex-col md:flex-row items-end gap-3 bg-[var(--accent)] border border-border">
+            <Input
+              label="Nomor Seri Kustom (Opsional)"
+              placeholder="Contoh: BUKU-XYZ-01"
+              value={customSerial}
+              onChange={(e) => {
+                const val = e.target.value;
+                setCustomSerial(val);
+                if (val.trim()) {
+                  setGenQty(1);
+                }
+              }}
+              containerClassName="flex-1"
+            />
             <Input
               label="Jumlah QR"
               type="number"
@@ -249,7 +264,8 @@ export default function BookDetailPage() {
               max={50}
               value={genQty}
               onChange={(e) => setGenQty(Number(e.target.value))}
-              containerClassName="flex-1"
+              disabled={!!customSerial.trim()}
+              containerClassName="w-32"
             />
             <Button onClick={handleGenerateQr} isLoading={generating} leftIcon={<QrCode size={16} />}>
               Generate

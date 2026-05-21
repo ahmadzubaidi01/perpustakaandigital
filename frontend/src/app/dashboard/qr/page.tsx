@@ -233,6 +233,7 @@ function GeneratorTab() {
   const [books, setBooks] = useState<any[]>([]);
   const [selectedBookId, setSelectedBookId] = useState('');
   const [quantity, setQuantity] = useState(1);
+  const [customSerial, setCustomSerial] = useState('');
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<any[]>([]);
   const [searchBook, setSearchBook] = useState('');
@@ -260,9 +261,10 @@ function GeneratorTab() {
 
     setLoading(true);
     try {
-      const res = await qrAPI.generate({ book_id: Number(selectedBookId), quantity });
+      const res = await qrAPI.generate({ book_id: Number(selectedBookId), quantity, custom_serial: customSerial.trim() || undefined });
       setResults(res.data.data || []);
       toast.success(`${quantity} unit QR code berhasil dibuat!`);
+      setCustomSerial('');
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Gagal generate QR Code');
     } finally {
@@ -336,7 +338,20 @@ function GeneratorTab() {
             </div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end pt-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end pt-2">
+            <Input
+              label="Nomor Seri Kustom (Opsional)"
+              placeholder="Contoh: BUKU-XYZ-01"
+              value={customSerial}
+              onChange={(e) => {
+                const val = e.target.value;
+                setCustomSerial(val);
+                if (val.trim()) {
+                  setQuantity(1);
+                }
+              }}
+              helperText="Mengisi ini akan membuat 1 QR code dengan nomor seri kustom."
+            />
             <Input
               label="Jumlah Kopi (QR) yang Dibuat"
               type="number"
@@ -344,14 +359,15 @@ function GeneratorTab() {
               max={50}
               value={quantity}
               onChange={(e) => setQuantity(Number(e.target.value))}
-              helperText="Setiap nomor seri QR code berlaku eksklusif untuk satu salinan fisik."
+              disabled={!!customSerial.trim()}
+              helperText={customSerial.trim() ? "Jumlah dikunci pada 1 untuk nomor seri kustom." : "Setiap nomor seri QR code berlaku eksklusif untuk satu salinan fisik."}
             />
             <Button
               onClick={handleGenerate}
               disabled={loading || !selectedBookId}
               variant="primary"
               size="md"
-              className="w-full sm:w-auto self-start md:self-auto"
+              className="w-full"
               leftIcon={loading ? <Loader2 size={16} className="animate-spin" /> : <QrCode size={16} />}
             >
               {loading ? 'Menghasilkan...' : 'Generate Unit QR'}

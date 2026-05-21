@@ -1,18 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, Platform, TextInput, ScrollView, FlatList } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, Platform, TextInput, ScrollView, FlatList, KeyboardAvoidingView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, FontSize, BorderRadius } from '../../constants/theme';
-import { qrAPI, borrowingsAPI } from '../../services/api';
+import { qrAPI, borrowingsAPI, inventoryAPI } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
+import { useTheme } from '../../context/ThemeContext';
 import { queueOfflineScan, getAllScans, clearSyncedScans, OfflineScan } from '../../services/db';
 import { checkOnlineStatus, syncOfflineScans } from '../../services/syncService';
+import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 
 type ScanMode = 'verification' | 'borrowing' | 'returning';
 
 export default function ScanScreen() {
   const { user } = useAuthStore();
+  const { colors, isDark } = useTheme();
+  const styles = getStyles(colors);
   const isAdmin = user?.user_role === 'school_admin' || user?.user_role === 'super_admin';
 
   const [permission, requestPermission] = useCameraPermissions();
@@ -22,15 +26,71 @@ export default function ScanScreen() {
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
+  // Student search and selection states
+  const [studentSearchQuery, setStudentSearchQuery] = useState('');
+  const [selectedStudent, setSelectedStudent] = useState<any>(null);
+  const [studentSearchResults, setStudentSearchResults] = useState<any[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [showManualInput, setShowManualInput] = useState(false);
+
   // Offline states
   const [offlineScans, setOfflineScans] = useState<OfflineScan[]>([]);
   const [showQueue, setShowQueue] = useState(false);
   const [isSyncingQueue, setIsSyncingQueue] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
 
+  // Advanced Inventory & Audit states
+  const [traceLoading, setTraceLoading] = useState(false);
+  const [traceData, setTraceData] = useState<any>(null);
+  const [anomalies, setAnomalies] = useState<any[]>([]);
+  const [loadingAnomalies, setLoadingAnomalies] = useState(false);
+  const [noteText, setNoteText] = useState('');
+  const [showAnomalies, setShowAnomalies] = useState(false);
+  const [showAuditPanel, setShowAuditPanel] = useState(false);
+
+  const searchStudents = async (query: string) => {
+    if (!query || query.trim().length < 2) {
+      setStudentSearchResults([]);
+      return;
+    }
+    setSearchLoading(true);
+    try {
+      const res = await borrowingsAPI.searchStudent(query);
+      setStudentSearchResults(res.data.data || []);
+    } catch (err: any) {
+      console.warn('Gagal mencari siswa:', err);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (studentSearchQuery.trim().length >= 2) {
+        searchStudents(studentSearchQuery);
+      } else {
+        setStudentSearchResults([]);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [studentSearchQuery]);
+
   const loadQueue = () => {
     const list = getAllScans();
     setOfflineScans(list);
+  };
+
+  const fetchAnomalies = async () => {
+    if (!isAdmin) return;
+    setLoadingAnomalies(true);
+    try {
+      const res = await inventoryAPI.getAnomalies();
+      setAnomalies(res.data.data || []);
+    } catch (err) {
+      console.warn('Failed to fetch anomalies:', err);
+    } finally {
+      setLoadingAnomalies(false);
+    }
   };
 
   useEffect(() => {
@@ -41,8 +101,25 @@ export default function ScanScreen() {
     };
     checkNet();
     const netInterval = setInterval(checkNet, 15000);
+
+    if (isAdmin) {
+      fetchAnomalies();
+    }
+
     return () => clearInterval(netInterval);
   }, []);
+
+  const fetchTrace = async (qrId: number) => {
+    setTraceLoading(true);
+    try {
+      const res = await inventoryAPI.getQrTrace(qrId);
+      setTraceData(res.data.data);
+    } catch (err: any) {
+      console.warn('Trace fetch failed:', err);
+    } finally {
+      setTraceLoading(false);
+    }
+  };
 
   const handleBarCodeScanned = async ({ data }: { data: string }) => {
     if (loading) return;
@@ -92,7 +169,14 @@ export default function ScanScreen() {
       let response;
       if (scanMode === 'verification') {
         response = await qrAPI.scan({ qr_payload: data, scan_type: 'verification', latitude, longitude });
-        setResult({ type: 'verification', data: response.data.data });
+        const scannedData = response.data.data;
+        setResult({ type: 'verification', data: scannedData });
+
+        // Trigger trace fetch automatically if book_qr is found
+        const qrId = scannedData?.book_qr?.book_qr_id;
+        if (qrId) {
+          fetchTrace(qrId);
+        }
       } else if (scanMode === 'borrowing') {
         if (!studentId.trim()) {
           Alert.alert('Error', 'ID Siswa wajib diisi untuk peminjaman cepat!');
@@ -116,12 +200,103 @@ export default function ScanScreen() {
     }
   };
 
+  const handleUpdateStatus = async (status: string) => {
+    const qrId = traceData?.book_qr_id || result?.data?.book_qr?.book_qr_id;
+    if (!qrId) return;
+
+    Alert.alert(
+      'Konfirmasi Ubah Status',
+      `Apakah Anda yakin ingin menandai buku ini sebagai "${
+        status === 'active' ? 'Aktif' : status === 'damaged' ? 'Rusak' : 'Hilang'
+      }"?`,
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Ya, Ubah',
+          onPress: async () => {
+            setLoading(true);
+            try {
+              await inventoryAPI.markQrStatus(qrId, status, noteText || undefined);
+              Alert.alert('Sukses', 'Status QR code buku berhasil diperbarui.');
+              setNoteText('');
+              // Re-fetch traceability and anomalies lists
+              await fetchTrace(qrId);
+              fetchAnomalies();
+            } catch (err: any) {
+              Alert.alert('Gagal Perbarui Status', err.response?.data?.message || 'Terjadi kesalahan sistem');
+            } finally {
+              setLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleRunAudit = async () => {
+    Alert.alert(
+      'Konfirmasi Audit',
+      'Audit stok akan mencocokkan data seluruh status fisik QR code buku dengan jumlah inventaris digital di perpustakaan sekolah Anda. Lanjutkan?',
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Jalankan Audit',
+          onPress: async () => {
+            setLoading(true);
+            try {
+              const res = await inventoryAPI.runAudit(user?.school_id ?? undefined);
+              Alert.alert(
+                'Audit Selesai',
+                `Audit berhasil diselesaikan.\n\nBuku disinkronkan: ${res.data.data.synced_books}\nAnomali terdeteksi: ${res.data.data.anomalies?.length || 0}`
+              );
+              fetchAnomalies();
+            } catch (err: any) {
+              Alert.alert('Audit Gagal', err.response?.data?.message || 'Gagal menjalankan audit');
+            } finally {
+              setLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleInitializeStock = async () => {
+    Alert.alert(
+      'PERINGATAN INISIALISASI',
+      'Tindakan ini akan mengatur ulang total persediaan buku di sekolah Anda dan menghitung ulang seluruh data dari nol berdasarkan QR Code aktif yang valid. Apakah Anda yakin?',
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Inisialisasi',
+          style: 'destructive',
+          onPress: async () => {
+            setLoading(true);
+            try {
+              const res = await inventoryAPI.initializeStock(user?.school_id ?? undefined);
+              Alert.alert(
+                'Inisialisasi Selesai',
+                `Stok perpustakaan berhasil diinisialisasi ulang.\nTotal buku: ${res.data.data.initialized_books}`
+              );
+              fetchAnomalies();
+            } catch (err: any) {
+              Alert.alert('Inisialisasi Gagal', err.response?.data?.message || 'Gagal inisialisasi');
+            } finally {
+              setLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const triggerManualSync = async () => {
     setIsSyncingQueue(true);
     try {
       await syncOfflineScans();
       loadQueue();
       Alert.alert('Sinkronisasi Selesai', 'Antrean offline berhasil diproses.');
+      fetchAnomalies();
     } catch (err) {
       Alert.alert('Gagal Sinkronisasi', 'Gagal memproses antrean. Pastikan internet Anda stabil.');
     } finally {
@@ -136,19 +311,48 @@ export default function ScanScreen() {
 
   const getPendingCount = () => offlineScans.filter((s) => s.sync_status === 'pending').length;
 
-  if (!permission) return <View style={s.c}><ActivityIndicator color={Colors.primary400} /></View>;
+  const renderStatusBadge = (status: string) => {
+    switch (status) {
+      case 'active':
+        return (
+          <View style={[styles.badge, styles.badgeSuccess]}>
+            <Text style={[styles.badgeText, { color: colors.success500 }]}>Aktif</Text>
+          </View>
+        );
+      case 'damaged':
+        return (
+          <View style={[styles.badge, styles.badgeWarning]}>
+            <Text style={[styles.badgeText, { color: colors.warning500 }]}>Rusak</Text>
+          </View>
+        );
+      case 'lost':
+        return (
+          <View style={[styles.badge, styles.badgeDanger]}>
+            <Text style={[styles.badgeText, { color: colors.danger500 }]}>Hilang</Text>
+          </View>
+        );
+      default:
+        return (
+          <View style={[styles.badge, styles.badgeSecondary]}>
+            <Text style={[styles.badgeText, { color: colors.textMuted }]}>{status}</Text>
+          </View>
+        );
+    }
+  };
+
+  if (!permission) return <View style={styles.center}><ActivityIndicator color={colors.primary400} /></View>;
   if (!permission.granted) return (
-    <View style={s.center}><Ionicons name="camera-outline" size={64} color={Colors.surface500} />
-      <Text style={s.perm}>Izin kamera diperlukan untuk memindai kode QR buku</Text>
-      <TouchableOpacity style={s.btn} onPress={requestPermission}><Text style={s.btnT}>Izinkan Kamera</Text></TouchableOpacity>
+    <View style={styles.center}><Ionicons name="camera-outline" size={64} color={colors.surface500} />
+      <Text style={styles.perm}>Izin kamera diperlukan untuk memindai kode QR buku</Text>
+      <TouchableOpacity style={styles.btn} onPress={requestPermission}><Text style={styles.btnT}>Izinkan Kamera</Text></TouchableOpacity>
     </View>
   );
 
   const renderQueueItem = ({ item }: { item: OfflineScan }) => {
     const statusIcons = {
-      pending: <Ionicons name="time-outline" size={20} color={Colors.warning500} />,
-      synced: <Ionicons name="checkmark-circle-outline" size={20} color={Colors.success500} />,
-      failed: <Ionicons name="alert-circle-outline" size={20} color={Colors.danger500} />,
+      pending: <Ionicons name="time-outline" size={20} color={colors.warning500} />,
+      synced: <Ionicons name="checkmark-circle-outline" size={20} color={colors.success500} />,
+      failed: <Ionicons name="alert-circle-outline" size={20} color={colors.danger500} />,
     };
 
     const modeLabels = {
@@ -160,247 +364,604 @@ export default function ScanScreen() {
     };
 
     return (
-      <View style={s.qItem}>
-        <View style={s.qLeft}>
+      <View style={styles.qItem}>
+        <View style={styles.qLeft}>
           {statusIcons[item.sync_status]}
           <View>
-            <Text style={s.qTitle}>{modeLabels[item.scan_type]}</Text>
-            <Text style={s.qPayload} numberOfLines={1}>{item.qr_payload}</Text>
+            <Text style={styles.qTitle}>{modeLabels[item.scan_type]}</Text>
+            <Text style={styles.qPayload} numberOfLines={1}>{item.qr_payload}</Text>
             {item.error_message && (
-              <Text style={s.qError}>{item.error_message}</Text>
+              <Text style={styles.qError}>{item.error_message}</Text>
             )}
           </View>
         </View>
-        <Text style={s.qTime}>{new Date(item.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</Text>
+        <Text style={styles.qTime}>{new Date(item.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</Text>
       </View>
     );
   };
 
   return (
-    <ScrollView style={s.c} contentContainerStyle={{ flexGrow: 1 }}>
-      {scanning ? (
-        <View style={StyleSheet.absoluteFillObject}>
-          <CameraView style={StyleSheet.absoluteFillObject} barcodeScannerSettings={{ barcodeTypes: ['qr'] }} onBarcodeScanned={handleBarCodeScanned}>
-            <View style={s.overlay}>
-              <View style={s.modeBanner}>
-                <Ionicons name="scan-outline" size={16} color={Colors.white} />
-                <Text style={s.modeBannerText}>
-                  {scanMode === 'verification' ? 'Mode: Verifikasi QR' : scanMode === 'borrowing' ? `Peminjaman (Siswa: ${studentId})` : 'Mode: Pengembalian Cepat'}
-                </Text>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+      <SafeAreaView style={styles.safeContainer}>
+        <ScrollView style={styles.container} contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
+          {scanning ? (
+            <View style={StyleSheet.absoluteFillObject}>
+              <CameraView 
+                style={StyleSheet.absoluteFillObject} 
+                barcodeScannerSettings={{ barcodeTypes: ['qr'] }} 
+                onBarcodeScanned={handleBarCodeScanned} 
+              />
+              <View style={styles.overlay}>
+                <View style={styles.modeBanner}>
+                  <Ionicons name="scan-outline" size={16} color={colors.white} />
+                  <Text style={styles.modeBannerText}>
+                    {scanMode === 'verification' ? 'Mode: Verifikasi QR' : scanMode === 'borrowing' ? `Peminjaman (Siswa: ${studentId})` : 'Mode: Pengembalian Cepat'}
+                  </Text>
+                </View>
+                <View style={styles.frame} />
+                <Text style={styles.scanT}>Arahkan kamera ke QR Code Buku</Text>
               </View>
-              <View style={s.frame} />
-              <Text style={s.scanT}>Arahkan kamera ke QR Code Buku</Text>
+              <TouchableOpacity style={styles.cancel} onPress={() => setScanning(false)}><Text style={styles.cancelT}>Batal</Text></TouchableOpacity>
             </View>
-          </CameraView>
-          <TouchableOpacity style={s.cancel} onPress={() => setScanning(false)}><Text style={s.cancelT}>Batal</Text></TouchableOpacity>
-        </View>
-      ) : loading ? (
-        <View style={s.center}><ActivityIndicator size="large" color={Colors.primary400} /><Text style={s.perm}>Memproses Scan...</Text></View>
-      ) : result ? (
-        <View style={s.res}>
-          <View style={s.ok}><Ionicons name="checkmark-circle" size={28} color={Colors.success500} /><Text style={s.okT}>Proses Berhasil</Text></View>
-
-          {result.type === 'verification' && (
-            <View style={s.card}>
-              <Text style={s.lbl}>JUDUL BUKU</Text>
-              <Text style={s.val}>{result.data.book?.book_title}</Text>
-              <Text style={s.sub}>{result.data.book?.author_name}</Text>
-            </View>
-          )}
-
-          {result.type === 'borrowing' && (
-            <View style={s.card}>
-              <Text style={s.lbl}>PEMINJAMAN CEPAT SUKSES</Text>
-              <Text style={s.val}>{result.data.book_title || 'Buku Berhasil Dipinjam'}</Text>
-              <Text style={s.sub}>Siswa: {result.data.student_name || `ID ${studentId}`}</Text>
-            </View>
-          )}
-
-          {result.type === 'returning' && (
-            <View style={s.card}>
-              <Text style={s.lbl}>PENGEMBALIAN CEPAT SUKSES</Text>
-              <Text style={s.val}>{result.data.book_title || 'Buku Berhasil Dikembalikan'}</Text>
-              <Text style={s.sub}>Status: Dikembalikan</Text>
-            </View>
-          )}
-
-          <TouchableOpacity style={s.btn} onPress={() => { setResult(null); setScanning(true); }}><Text style={s.btnT}>Scan Lagi</Text></TouchableOpacity>
-          <TouchableOpacity style={[s.btn, { backgroundColor: Colors.surface700, marginTop: Spacing.sm }]} onPress={() => setResult(null)}><Text style={s.btnT}>Kembali ke Menu</Text></TouchableOpacity>
-        </View>
-      ) : (
-        <View style={s.mainContainer}>
-          {/* Online/Offline Status Indicator */}
-          <View style={[s.netStatus, { backgroundColor: isOnline ? Colors.success500 + '15' : Colors.danger500 + '15' }]}>
-            <Ionicons name={isOnline ? 'cloud-done-outline' : 'cloud-offline-outline'} size={18} color={isOnline ? Colors.success500 : Colors.danger500} />
-            <Text style={[s.netStatusText, { color: isOnline ? Colors.success500 : Colors.danger500 }]}>
-              {isOnline ? 'Terhubung ke Server' : 'Mode Offline (Lokal)'}
-            </Text>
-          </View>
-
-          <View style={s.hero}>
-            <View style={s.icon}><Ionicons name="qr-code-outline" size={56} color={Colors.primary400} /></View>
-            <Text style={s.title}>QR Code Scanner</Text>
-            <Text style={s.desc}>Pindai QR code buku untuk peminjaman, pengembalian, atau verifikasi status.</Text>
-          </View>
-
-          {/* Mode Selector for Admins */}
-          {isAdmin && (
-            <View style={s.adminPanel}>
-              <Text style={s.panelTitle}>Pilih Mode Scan</Text>
-              <View style={s.modeGrid}>
-                <TouchableOpacity style={[s.modeBtn, scanMode === 'verification' && s.activeMode]} onPress={() => setScanMode('verification')}>
-                  <Ionicons name="shield-checkmark-outline" size={20} color={scanMode === 'verification' ? Colors.white : Colors.surface300} />
-                  <Text style={[s.modeBtnText, scanMode === 'verification' && s.activeModeText]}>Verifikasi</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity style={[s.modeBtn, scanMode === 'borrowing' && s.activeMode]} onPress={() => setScanMode('borrowing')}>
-                  <Ionicons name="book-outline" size={20} color={scanMode === 'borrowing' ? Colors.white : Colors.surface300} />
-                  <Text style={[s.modeBtnText, scanMode === 'borrowing' && s.activeModeText]}>Pinjam</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity style={[s.modeBtn, scanMode === 'returning' && s.activeMode]} onPress={() => setScanMode('returning')}>
-                  <Ionicons name="arrow-undo-outline" size={20} color={scanMode === 'returning' ? Colors.white : Colors.surface300} />
-                  <Text style={[s.modeBtnText, scanMode === 'returning' && s.activeModeText]}>Kembali</Text>
-                </TouchableOpacity>
+          ) : loading ? (
+            <View style={styles.center}><ActivityIndicator size="large" color={colors.primary400} /><Text style={styles.perm}>Memproses Scan...</Text></View>
+          ) : result ? (
+            <View style={styles.res}>
+              <View style={styles.ok}>
+                <Ionicons name="checkmark-circle" size={28} color={colors.success500} />
+                <Text style={styles.okT}>Proses Berhasil</Text>
               </View>
 
-              {/* Student ID input if borrowing mode is selected */}
-              {scanMode === 'borrowing' && (
-                <View style={s.inputContainer}>
-                  <Text style={s.inputLabel}>ID Siswa (Anggota)</Text>
-                  <View style={s.inputWrapper}>
-                    <Ionicons name="person-outline" size={16} color={Colors.surface400} style={s.inputIcon} />
-                    <TextInput
-                      style={s.textInput}
-                      placeholder="Masukkan ID/NIS Siswa..."
-                      placeholderTextColor={Colors.surface400}
-                      keyboardType="numeric"
-                      value={studentId}
-                      onChangeText={setStudentId}
-                    />
+              {result.type === 'verification' && (
+                <View style={{ gap: Spacing.md }}>
+                  <View style={styles.card}>
+                    <Text style={styles.lbl}>DETAIL QR BUKU</Text>
+                    <Text style={styles.val}>{result.data?.book?.book_title || 'Unknown Book'}</Text>
+                    <Text style={styles.sub}>Pengarang: {result.data?.book?.author_name || '-'}</Text>
+                    <Text style={styles.sub}>Sekolah: {result.data?.book?.school?.school_name || '-'}</Text>
                   </View>
+
+                  {traceLoading ? (
+                    <View style={styles.loadingCard}>
+                      <ActivityIndicator size="small" color={colors.primary400} />
+                      <Text style={styles.loadingCardText}>Mengambil data traceability...</Text>
+                    </View>
+                  ) : traceData ? (
+                    <View style={{ gap: Spacing.md }}>
+                      {/* Status adjustments & Info Panel */}
+                      <View style={styles.card}>
+                        <Text style={styles.lbl}>INFO KONDISI FISIK & SCAN</Text>
+                        <View style={styles.traceRow}>
+                          <Text style={styles.traceLabel}>Serial:</Text>
+                          <Text style={styles.traceVal}>{traceData.qr_serial_number || '-'}</Text>
+                        </View>
+                        <View style={styles.traceRow}>
+                          <Text style={styles.traceLabel}>Status:</Text>
+                          {renderStatusBadge(traceData.qr_status)}
+                        </View>
+                        <View style={styles.traceRow}>
+                          <Text style={styles.traceLabel}>Scan Terakhir:</Text>
+                          <Text style={styles.traceVal}>
+                            {traceData.last_scanned_at ? new Date(traceData.last_scanned_at).toLocaleDateString('id-ID') : 'Belum pernah'}
+                          </Text>
+                        </View>
+                        {traceData.last_scanned_by && (
+                          <View style={styles.traceRow}>
+                            <Text style={styles.traceLabel}>Oleh Admin:</Text>
+                            <Text style={styles.traceVal}>{traceData.last_scanned_by.full_name}</Text>
+                          </View>
+                        )}
+
+                        {/* Status adjustment buttons */}
+                        {isAdmin && (
+                          <View style={{ marginTop: Spacing.md, gap: Spacing.sm }}>
+                            <Text style={styles.sectionSubtitle}>Sesuaikan Kondisi Buku (Update Status)</Text>
+                            <View style={styles.inputWrapper}>
+                              <Ionicons name="create-outline" size={16} color={colors.surface400} style={styles.inputIcon} />
+                              <TextInput
+                                style={styles.textInput}
+                                placeholder="Masukkan catatan/alasan update..."
+                                placeholderTextColor={colors.surface400}
+                                value={noteText}
+                                onChangeText={setNoteText}
+                              />
+                            </View>
+                            <View style={styles.adjustmentGrid}>
+                              <TouchableOpacity
+                                style={[styles.adjustBtn, traceData.qr_status === 'active' && styles.disabledBtn, { backgroundColor: colors.success500 }]}
+                                disabled={traceData.qr_status === 'active'}
+                                onPress={() => handleUpdateStatus('active')}
+                              >
+                                <Ionicons name="checkmark-circle-outline" size={16} color={colors.white} />
+                                <Text style={styles.adjustBtnText}>Aktifkan</Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={[styles.adjustBtn, traceData.qr_status === 'damaged' && styles.disabledBtn, { backgroundColor: colors.warning500 }]}
+                                disabled={traceData.qr_status === 'damaged'}
+                                onPress={() => handleUpdateStatus('damaged')}
+                              >
+                                <Ionicons name="alert-circle-outline" size={16} color={colors.white} />
+                                <Text style={styles.adjustBtnText}>Rusak</Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={[styles.adjustBtn, traceData.qr_status === 'lost' && styles.disabledBtn, { backgroundColor: colors.danger500 }]}
+                                disabled={traceData.qr_status === 'lost'}
+                                onPress={() => handleUpdateStatus('lost')}
+                              >
+                                <Ionicons name="trash-outline" size={16} color={colors.white} />
+                                <Text style={styles.adjustBtnText}>Hilang</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        )}
+                      </View>
+
+                      {/* Borrowings history and scan log list */}
+                      {traceData.borrowings && traceData.borrowings.length > 0 && (
+                        <View style={styles.card}>
+                          <Text style={styles.lbl}>RIWAYAT PEMINJAMAN TERAKHIR</Text>
+                          {traceData.borrowings.slice(0, 5).map((b: any, index: number) => (
+                            <View key={index} style={styles.logItem}>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.logTitle}>{b.borrower?.full_name || 'Siswa'}</Text>
+                                <Text style={styles.logSub}>
+                                  Pinjam: {new Date(b.created_at).toLocaleDateString('id-ID')}
+                                </Text>
+                              </View>
+                              <View style={[styles.badge, b.borrowing_status === 'returned' ? styles.badgeSuccess : styles.badgeWarning]}>
+                                <Text style={[styles.badgeText, { color: b.borrowing_status === 'returned' ? colors.success500 : colors.warning500 }]}>
+                                  {b.borrowing_status === 'returned' ? 'Kembali' : 'Dipinjam'}
+                                </Text>
+                              </View>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+
+                      {traceData.scan_logs && traceData.scan_logs.length > 0 && (
+                        <View style={styles.card}>
+                          <Text style={styles.lbl}>LOG PEMINDAIAN TERAKHIR</Text>
+                          {traceData.scan_logs.slice(0, 5).map((log: any, index: number) => (
+                            <View key={index} style={styles.logItem}>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.logTitle}>Scanned by {log.scanned_by?.full_name || 'Admin'}</Text>
+                                <Text style={styles.logSub}>
+                                  Waktu: {new Date(log.scanned_at).toLocaleString('id-ID')}
+                                </Text>
+                              </View>
+                              <Text style={styles.logTypeBadge}>{log.scan_type}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+                    </View>
+                  ) : null}
                 </View>
               )}
-            </View>
-          )}
 
-          <TouchableOpacity
-            style={[s.btn, scanMode === 'borrowing' && !studentId.trim() && s.disabledBtn]}
-            disabled={scanMode === 'borrowing' && !studentId.trim()}
-            onPress={() => setScanning(true)}
-          >
-            <Ionicons name="scan" size={20} color={Colors.white} />
-            <Text style={s.btnT}>Mulai Scan</Text>
-          </TouchableOpacity>
-
-          {/* Offline Queue Manager Accordion */}
-          {isAdmin && (
-            <View style={s.queueContainer}>
-              <TouchableOpacity style={s.queueHeader} onPress={() => setShowQueue(!showQueue)} activeOpacity={0.8}>
-                <View style={s.queueTitleRow}>
-                  <Ionicons name="file-tray-full-outline" size={20} color={Colors.white} />
-                  <Text style={s.queueTitle}>Antrean Offline</Text>
-                  {getPendingCount() > 0 && (
-                    <View style={s.qBadge}><Text style={s.qBadgeText}>{getPendingCount()}</Text></View>
-                  )}
+              {result.type === 'borrowing' && (
+                <View style={styles.card}>
+                  <Text style={styles.lbl}>PEMINJAMAN CEPAT SUKSES</Text>
+                  <Text style={styles.val}>{result.data.book_title || 'Buku Berhasil Dipinjam'}</Text>
+                  <Text style={styles.sub}>Siswa: {result.data.student_name || `ID ${studentId}`}</Text>
                 </View>
-                <Ionicons name={showQueue ? 'chevron-up' : 'chevron-down'} size={20} color={Colors.surface300} />
-              </TouchableOpacity>
+              )}
 
-              {showQueue && (
-                <View style={s.queueContent}>
-                  <View style={s.queueActions}>
-                    <TouchableOpacity style={[s.qActionBtn, isSyncingQueue && s.disabledBtn]} disabled={isSyncingQueue} onPress={triggerManualSync}>
-                      {isSyncingQueue ? <ActivityIndicator size="small" color={Colors.white} /> : <Ionicons name="sync-outline" size={14} color={Colors.white} />}
-                      <Text style={s.qActionText}>Sinkronkan</Text>
+              {result.type === 'returning' && (
+                <View style={styles.card}>
+                  <Text style={styles.lbl}>PENGEMBALIAN CEPAT SUKSES</Text>
+                  <Text style={styles.val}>{result.data.book_title || 'Buku Berhasil Dikembalikan'}</Text>
+                  <Text style={styles.sub}>Status: Dikembalikan</Text>
+                </View>
+              )}
+
+              <TouchableOpacity style={styles.btn} onPress={() => { setResult(null); setTraceData(null); setScanning(true); }}><Text style={styles.btnT}>Scan Lagi</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.btn, { backgroundColor: colors.surface700, marginTop: Spacing.sm }]} onPress={() => { setResult(null); setTraceData(null); }}><Text style={styles.btnT}>Kembali ke Menu</Text></TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.mainContainer}>
+              {/* Online/Offline Status Indicator */}
+              <View style={[styles.netStatus, { backgroundColor: isOnline ? colors.success500 + '15' : colors.danger500 + '15' }]}>
+                <Ionicons name={isOnline ? 'cloud-done-outline' : 'cloud-offline-outline'} size={18} color={isOnline ? colors.success500 : colors.danger500} />
+                <Text style={[styles.netStatusText, { color: isOnline ? colors.success500 : colors.danger500 }]}>
+                  {isOnline ? 'Terhubung ke Server' : 'Mode Offline (Lokal)'}
+                </Text>
+              </View>
+
+              <View style={styles.hero}>
+                <View style={styles.icon}><Ionicons name="qr-code-outline" size={56} color={colors.primary400} /></View>
+                <Text style={styles.title}>QR Code Scanner</Text>
+                <Text style={styles.desc}>Pindai QR code buku untuk peminjaman, pengembalian, atau verifikasi status.</Text>
+              </View>
+
+              {/* Mode Selector for Admins */}
+              {isAdmin && (
+                <View style={styles.adminPanel}>
+                  <Text style={styles.panelTitle}>Pilih Mode Scan</Text>
+                  <View style={styles.modeGrid}>
+                    <TouchableOpacity style={[styles.modeBtn, scanMode === 'verification' && styles.activeMode]} onPress={() => setScanMode('verification')}>
+                      <Ionicons name="shield-checkmark-outline" size={20} color={scanMode === 'verification' ? colors.white : colors.textMuted} />
+                      <Text style={[styles.modeBtnText, scanMode === 'verification' && styles.activeModeText]}>Verifikasi</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={[s.qActionBtn, { backgroundColor: Colors.surface600 }]} onPress={triggerClearSynced}>
-                      <Ionicons name="trash-outline" size={14} color={Colors.white} />
-                      <Text style={s.qActionText}>Bersihkan</Text>
+
+                    <TouchableOpacity style={[styles.modeBtn, scanMode === 'borrowing' && styles.activeMode]} onPress={() => setScanMode('borrowing')}>
+                      <Ionicons name="book-outline" size={20} color={scanMode === 'borrowing' ? colors.white : colors.textMuted} />
+                      <Text style={[styles.modeBtnText, scanMode === 'borrowing' && styles.activeModeText]}>Pinjam</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity style={[styles.modeBtn, scanMode === 'returning' && styles.activeMode]} onPress={() => setScanMode('returning')}>
+                      <Ionicons name="arrow-undo-outline" size={20} color={scanMode === 'returning' ? colors.white : colors.textMuted} />
+                      <Text style={[styles.modeBtnText, scanMode === 'returning' && styles.activeModeText]}>Kembali</Text>
                     </TouchableOpacity>
                   </View>
 
-                  {offlineScans.length > 0 ? (
-                    <FlatList
-                      data={offlineScans}
-                      renderItem={renderQueueItem}
-                      keyExtractor={(item, idx) => String(item.id || idx)}
-                      scrollEnabled={false}
-                    />
-                  ) : (
-                    <View style={s.qEmpty}>
-                      <Ionicons name="folder-open-outline" size={28} color={Colors.surface500} />
-                      <Text style={s.qEmptyText}>Antrean offline kosong.</Text>
+                  {/* Student ID input if borrowing mode is selected */}
+                  {scanMode === 'borrowing' && (
+                    <View style={styles.inputContainer}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.xs }}>
+                        <Text style={styles.inputLabel}>Cari Siswa (Anggota)</Text>
+                        <TouchableOpacity onPress={() => { setShowManualInput(!showManualInput); setStudentSearchQuery(''); setSelectedStudent(null); setStudentId(''); setStudentSearchResults([]); }}>
+                          <Text style={{ fontSize: FontSize.xs, color: colors.primary400, fontWeight: '700' }}>
+                            {showManualInput ? 'Cari dari Database' : 'Input ID Manual'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      {showManualInput ? (
+                        <View style={styles.inputWrapper}>
+                          <Ionicons name="keypad-outline" size={16} color={colors.surface400} style={styles.inputIcon} />
+                          <TextInput
+                            style={styles.textInput}
+                            placeholder="Masukkan Database ID Siswa (Anggota)..."
+                            placeholderTextColor={colors.surface400}
+                            keyboardType="numeric"
+                            value={studentId}
+                            onChangeText={setStudentId}
+                          />
+                        </View>
+                      ) : (
+                        <View style={{ gap: Spacing.sm }}>
+                          {selectedStudent ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: colors.success500 + '15', borderWidth: 1, borderColor: colors.success500 + '30', borderRadius: BorderRadius.md, padding: Spacing.md }}>
+                              <View style={{ width: 36, height: 36, borderRadius: BorderRadius.md, backgroundColor: colors.primary500, alignItems: 'center', justifyContent: 'center' }}>
+                                <Text style={{ color: colors.white, fontWeight: '700', fontSize: FontSize.md }}>
+                                  {selectedStudent.full_name?.charAt(0)?.toUpperCase() || 'S'}
+                                </Text>
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={{ fontSize: FontSize.sm, fontWeight: '700', color: colors.text }} numberOfLines={1}>
+                                  {selectedStudent.full_name}
+                                </Text>
+                                <Text style={{ fontSize: FontSize.xs, color: colors.textMuted }}>
+                                  {selectedStudent.class_name || 'Tanpa kelas'} · NIS: {selectedStudent.student_id_number || '-'}
+                                </Text>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginTop: 2 }}>
+                                  <View style={{ backgroundColor: selectedStudent.active_borrowing_count > 0 ? colors.warning500 + '20' : colors.success500 + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                    <Text style={{ color: selectedStudent.active_borrowing_count > 0 ? colors.warning500 : colors.success500, fontSize: 10, fontWeight: '700' }}>
+                                      {selectedStudent.active_borrowing_count} aktif
+                                    </Text>
+                                  </View>
+                                </View>
+                              </View>
+                              <TouchableOpacity onPress={() => { setSelectedStudent(null); setStudentId(''); }}>
+                                <Ionicons name="close-circle" size={22} color={colors.danger500} />
+                              </TouchableOpacity>
+                            </View>
+                          ) : (
+                            <>
+                              <View style={styles.inputWrapper}>
+                                {searchLoading ? (
+                                  <ActivityIndicator size="small" color={colors.primary400} style={{ marginRight: Spacing.sm }} />
+                                ) : (
+                                  <Ionicons name="search-outline" size={16} color={colors.surface400} style={styles.inputIcon} />
+                                )}
+                                <TextInput
+                                  style={styles.textInput}
+                                  placeholder="Nama, email, atau NIS siswa..."
+                                  placeholderTextColor={colors.surface400}
+                                  value={studentSearchQuery}
+                                  onChangeText={setStudentSearchQuery}
+                                />
+                              </View>
+
+                              {/* Search Results list */}
+                              {studentSearchResults.length > 0 && (
+                                <View style={{ backgroundColor: colors.surface800, borderRadius: BorderRadius.md, borderWidth: 1, borderColor: colors.surface600, maxHeight: 160, overflow: 'hidden', padding: Spacing.xs }}>
+                                  <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled={true}>
+                                    {studentSearchResults.map((sItem, index) => (
+                                      <TouchableOpacity
+                                        key={`student-${sItem.user_id || index}-${index}`}
+                                        style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, padding: Spacing.md, borderBottomWidth: 1, borderBottomColor: colors.surface600 }}
+                                        onPress={() => {
+                                          setSelectedStudent(sItem);
+                                          setStudentId(String(sItem.user_id));
+                                          setStudentSearchResults([]);
+                                          setStudentSearchQuery('');
+                                        }}
+                                      >
+                                        <View style={{ width: 28, height: 28, borderRadius: BorderRadius.sm, backgroundColor: colors.primary500 + '30', alignItems: 'center', justifyContent: 'center' }}>
+                                          <Text style={{ color: colors.primary400, fontWeight: '700', fontSize: FontSize.xs }}>
+                                            {sItem.full_name?.charAt(0)?.toUpperCase() || 'S'}
+                                          </Text>
+                                        </View>
+                                        <View style={{ flex: 1 }}>
+                                          <Text style={{ fontSize: FontSize.xs, fontWeight: '700', color: colors.text }} numberOfLines={1}>
+                                            {sItem.full_name}
+                                          </Text>
+                                          <Text style={{ fontSize: 10, color: colors.textMuted }}>
+                                            {sItem.class_name || 'Tanpa kelas'} · {sItem.student_id_number || 'Tanpa NIS'}
+                                          </Text>
+                                        </View>
+                                        <View style={{ backgroundColor: sItem.active_borrowing_count > 0 ? colors.warning500 + '20' : colors.success500 + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                          <Text style={{ color: sItem.active_borrowing_count > 0 ? colors.warning500 : colors.success500, fontSize: 8, fontWeight: '800' }}>
+                                            {sItem.active_borrowing_count} pinjam
+                                          </Text>
+                                        </View>
+                                      </TouchableOpacity>
+                                    ))}
+                                  </ScrollView>
+                                </View>
+                              )}
+
+                              {studentSearchQuery.trim().length >= 2 && !searchLoading && studentSearchResults.length === 0 && (
+                                <View style={{ padding: Spacing.md, alignItems: 'center', backgroundColor: colors.surface800, borderRadius: BorderRadius.md, borderWidth: 1, borderColor: colors.surface600 }}>
+                                  <Text style={{ fontSize: FontSize.xs, color: colors.textMuted }}>Siswa tidak ditemukan.</Text>
+                                </View>
+                              )}
+
+                              {studentSearchQuery.trim().length < 2 && (
+                                <Text style={{ fontSize: 10, color: colors.textMuted, fontStyle: 'italic', marginLeft: 4 }}>
+                                  Ketik minimal 2 karakter untuk mencari...
+                                </Text>
+                              )}
+                            </>
+                          )}
+                        </View>
+                      )}
                     </View>
                   )}
                 </View>
               )}
+
+              <TouchableOpacity
+                style={[styles.btn, scanMode === 'borrowing' && !studentId.trim() && styles.disabledBtn]}
+                disabled={scanMode === 'borrowing' && !studentId.trim()}
+                onPress={() => setScanning(true)}
+              >
+                <Ionicons name="scan" size={20} color={colors.white} />
+                <Text style={styles.btnT}>Mulai Scan</Text>
+              </TouchableOpacity>
+
+              {/* Offline Queue Manager Accordion */}
+              {isAdmin && (
+                <View style={styles.queueContainer}>
+                  <TouchableOpacity style={styles.queueHeader} onPress={() => setShowQueue(!showQueue)} activeOpacity={0.8}>
+                    <View style={styles.queueTitleRow}>
+                      <Ionicons name="file-tray-full-outline" size={20} color={colors.text} />
+                      <Text style={styles.queueTitle}>Antrean Offline</Text>
+                      {getPendingCount() > 0 && (
+                        <View style={styles.qBadge}><Text style={styles.qBadgeText}>{getPendingCount()}</Text></View>
+                      )}
+                    </View>
+                    <Ionicons name={showQueue ? 'chevron-up' : 'chevron-down'} size={20} color={colors.textMuted} />
+                  </TouchableOpacity>
+
+                  {showQueue && (
+                    <View style={styles.queueContent}>
+                      <View style={styles.queueActions}>
+                        <TouchableOpacity style={[styles.qActionBtn, isSyncingQueue && styles.disabledBtn]} disabled={isSyncingQueue} onPress={triggerManualSync}>
+                          {isSyncingQueue ? <ActivityIndicator size="small" color={colors.white} /> : <Ionicons name="sync-outline" size={14} color={colors.white} />}
+                          <Text style={styles.qActionText}>Sinkronkan</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={[styles.qActionBtn, { backgroundColor: colors.surface600 }]} onPress={triggerClearSynced}>
+                          <Ionicons name="trash-outline" size={14} color={colors.white} />
+                          <Text style={styles.qActionText}>Bersihkan</Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      {offlineScans.length > 0 ? (
+                        <FlatList
+                          data={offlineScans}
+                          renderItem={renderQueueItem}
+                          keyExtractor={(item, idx) => `offline-${item.id || idx}-${idx}`}
+                          scrollEnabled={false}
+                        />
+                      ) : (
+                        <View style={styles.qEmpty}>
+                          <Ionicons name="folder-open-outline" size={28} color={colors.textMuted} />
+                          <Text style={styles.qEmptyText}>Antrean offline kosong.</Text>
+                        </View>
+                      )}
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* Advanced Inventory Audit Panel */}
+              {isAdmin && scanMode === 'verification' && (
+                <View style={{ gap: Spacing.lg }}>
+                  {/* Anomalies Panel */}
+                  <View style={styles.queueContainer}>
+                    <TouchableOpacity style={styles.queueHeader} onPress={() => setShowAnomalies(!showAnomalies)} activeOpacity={0.8}>
+                      <View style={styles.queueTitleRow}>
+                        <Ionicons name="alert-circle-outline" size={20} color={colors.accent500} />
+                        <Text style={styles.queueTitle}>Anomali Stok Buku</Text>
+                        {anomalies.length > 0 && (
+                          <View style={[styles.qBadge, { backgroundColor: colors.danger500 }]}><Text style={[styles.qBadgeText, { color: colors.white }]}>{anomalies.length}</Text></View>
+                        )}
+                      </View>
+                      <Ionicons name={showAnomalies ? 'chevron-up' : 'chevron-down'} size={20} color={colors.textMuted} />
+                    </TouchableOpacity>
+
+                    {showAnomalies && (
+                      <View style={styles.queueContent}>
+                        <TouchableOpacity style={[styles.qActionBtn, { backgroundColor: colors.surface700 }]} onPress={fetchAnomalies}>
+                          <Ionicons name="sync-outline" size={14} color={colors.white} />
+                          <Text style={styles.qActionText}>Segarkan List</Text>
+                        </TouchableOpacity>
+
+                        {loadingAnomalies ? (
+                          <ActivityIndicator color={colors.primary400} style={{ marginVertical: Spacing.md }} />
+                        ) : anomalies.length > 0 ? (
+                          anomalies.map((anom: any, idx: number) => (
+                            <View key={idx} style={styles.anomalyItem}>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.anomalyBookTitle} numberOfLines={1}>{anom.book_title}</Text>
+                                <Text style={styles.anomalyBookCode}>Kode: {anom.book_code || '-'}</Text>
+                                <Text style={styles.anomalyDesc}>
+                                  Stok Digital: {anom.total_stock} pcs | QR Terdaftar: {anom.total_qr_count} | Aktif: {anom.active_qr_count}
+                                </Text>
+                              </View>
+                              <View style={styles.anomalyBadge}>
+                                <Text style={styles.anomalyBadgeText}>Mismatch</Text>
+                              </View>
+                            </View>
+                          ))
+                        ) : (
+                          <View style={styles.qEmpty}>
+                            <Ionicons name="checkmark-done-circle-outline" size={28} color={colors.success500} />
+                            <Text style={styles.qEmptyText}>Tidak ada anomali persediaan. Sinkron!</Text>
+                          </View>
+                        )}
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Audit & Re-initialization Action Panel */}
+                  <View style={styles.queueContainer}>
+                    <TouchableOpacity style={styles.queueHeader} onPress={() => setShowAuditPanel(!showAuditPanel)} activeOpacity={0.8}>
+                      <View style={styles.queueTitleRow}>
+                        <Ionicons name="shield-checkmark-outline" size={20} color={colors.primary400} />
+                        <Text style={styles.queueTitle}>Fasilitas Audit & Kontrol</Text>
+                      </View>
+                      <Ionicons name={showAuditPanel ? 'chevron-up' : 'chevron-down'} size={20} color={colors.textMuted} />
+                    </TouchableOpacity>
+
+                    {showAuditPanel && (
+                      <View style={[styles.queueContent, { gap: Spacing.md }]}>
+                        <Text style={styles.controlPanelDesc}>
+                          Gunakan tombol di bawah ini untuk mensinkronkan ulang data total persediaan fisik vs digital di sekolah ini.
+                        </Text>
+                        <View style={{ gap: Spacing.sm }}>
+                          <TouchableOpacity style={styles.auditActionBtn} onPress={handleRunAudit}>
+                            <Ionicons name="analytics" size={18} color={colors.white} />
+                            <Text style={styles.auditActionText}>Jalankan Audit & Rekonsiliasi</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity style={[styles.auditActionBtn, { backgroundColor: colors.danger500 }]} onPress={handleInitializeStock}>
+                            <Ionicons name="refresh-circle-outline" size={18} color={colors.white} />
+                            <Text style={styles.auditActionText}>Inisialisasi Ulang Stok (Reset)</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              )}
             </View>
           )}
-        </View>
-      )}
-    </ScrollView>
+        </ScrollView>
+      </SafeAreaView>
+    </KeyboardAvoidingView>
   );
 }
 
-const s = StyleSheet.create({
-  c: { flex: 1, backgroundColor: Colors.surface900 },
-  mainContainer: { padding: Spacing.lg, gap: Spacing.lg, paddingBottom: 40 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.xxl, minHeight: 400 },
-  overlay: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.5)' },
-  modeBanner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.primary500, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, borderRadius: BorderRadius.full, position: 'absolute', top: 50 },
-  modeBannerText: { color: Colors.white, fontSize: FontSize.sm, fontWeight: '700' },
-  frame: { width: 260, height: 260, borderWidth: 3, borderColor: Colors.primary400, borderRadius: BorderRadius.xl },
-  scanT: { color: Colors.white, fontSize: FontSize.md, fontWeight: '600', marginTop: Spacing.xl },
-  cancel: { position: 'absolute', bottom: 40, alignSelf: 'center', backgroundColor: Colors.danger500, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md, borderRadius: BorderRadius.full },
-  cancelT: { color: Colors.white, fontWeight: '700' },
-  hero: { alignItems: 'center', textAlign: 'center', marginTop: Spacing.md },
-  icon: { width: 100, height: 100, borderRadius: 50, backgroundColor: Colors.primary500 + '15', alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.md },
-  title: { fontSize: FontSize.xxl, fontWeight: '800', color: Colors.white },
-  desc: { fontSize: FontSize.sm, color: Colors.surface300, textAlign: 'center', marginTop: Spacing.sm, lineHeight: 20 },
-  adminPanel: { backgroundColor: Colors.surface800, borderRadius: BorderRadius.xl, padding: Spacing.lg, borderWidth: 1, borderColor: Colors.surface600, gap: Spacing.md },
-  panelTitle: { fontSize: FontSize.md, fontWeight: '800', color: Colors.white },
-  modeGrid: { flexDirection: 'row', gap: Spacing.sm },
-  modeBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs, backgroundColor: Colors.surface700, paddingVertical: Spacing.md, borderRadius: BorderRadius.md, borderWidth: 1, borderColor: Colors.surface600 },
-  activeMode: { backgroundColor: Colors.primary500, borderColor: Colors.primary400 },
-  modeBtnText: { fontSize: FontSize.sm, fontWeight: '700', color: Colors.surface300 },
-  activeModeText: { color: Colors.white },
-  inputContainer: { gap: 6, marginTop: Spacing.xs },
-  inputLabel: { fontSize: FontSize.xs, fontWeight: '700', color: Colors.surface300 },
-  inputWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.surface700, borderRadius: BorderRadius.md, borderWidth: 1, borderColor: Colors.surface600, paddingHorizontal: Spacing.md },
-  inputIcon: { marginRight: Spacing.sm },
-  textInput: { flex: 1, height: 44, color: Colors.white, fontSize: FontSize.md },
-  btn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, backgroundColor: Colors.primary500, borderRadius: BorderRadius.lg, paddingVertical: Spacing.lg, width: '100%' },
-  disabledBtn: { opacity: 0.5 },
-  btnT: { fontSize: FontSize.lg, fontWeight: '700', color: Colors.white },
-  perm: { fontSize: FontSize.md, color: Colors.surface300, marginVertical: Spacing.xl, textAlign: 'center', lineHeight: 22 },
-  res: { padding: Spacing.lg, gap: Spacing.lg },
-  ok: { flexDirection: 'row', alignSelf: 'center', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.success500 + '15', borderRadius: BorderRadius.lg, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md },
-  okT: { fontSize: FontSize.md, fontWeight: '700', color: Colors.success500 },
-  card: { backgroundColor: Colors.surface800, borderRadius: BorderRadius.xl, padding: Spacing.xl, borderWidth: 1, borderColor: Colors.surface600 },
-  lbl: { fontSize: FontSize.xs, fontWeight: '700', color: Colors.surface400, marginBottom: 6, letterSpacing: 1 },
-  val: { fontSize: FontSize.xl, fontWeight: '800', color: Colors.white },
-  sub: { fontSize: FontSize.sm, color: Colors.surface300, marginTop: 4 },
-  netStatus: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs, alignSelf: 'center', paddingHorizontal: Spacing.md, paddingVertical: 4, borderRadius: BorderRadius.full },
-  netStatusText: { fontSize: FontSize.xs, fontWeight: '700' },
+const getStyles = (colors: any) =>
+  StyleSheet.create({
+    safeContainer: { flex: 1, backgroundColor: colors.surface900 },
+    container: { flex: 1, backgroundColor: colors.surface900 },
+    mainContainer: { padding: Spacing.lg, gap: Spacing.lg, paddingBottom: 40 },
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.xxl, minHeight: 400 },
+    overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.5)' },
+    modeBanner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: colors.primary500, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, borderRadius: BorderRadius.full, position: 'absolute', top: 50 },
+    modeBannerText: { color: colors.white, fontSize: FontSize.sm, fontWeight: '700' },
+    frame: { width: 260, height: 260, borderWidth: 3, borderColor: colors.primary400, borderRadius: BorderRadius.xl },
+    scanT: { color: colors.white, fontSize: FontSize.md, fontWeight: '600', marginTop: Spacing.xl },
+    cancel: { position: 'absolute', bottom: 40, alignSelf: 'center', backgroundColor: colors.danger500, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md, borderRadius: BorderRadius.full },
+    cancelT: { color: colors.white, fontWeight: '700' },
+    hero: { alignItems: 'center', textAlign: 'center', marginTop: Spacing.md },
+    icon: { width: 100, height: 100, borderRadius: 50, backgroundColor: colors.primary500 + '15', alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.md },
+    title: { fontSize: FontSize.xxl, fontWeight: '800', color: colors.text },
+    desc: { fontSize: FontSize.sm, color: colors.textMuted, textAlign: 'center', marginTop: Spacing.sm, lineHeight: 20 },
+    adminPanel: { backgroundColor: colors.surface800, borderRadius: BorderRadius.xl, padding: Spacing.lg, borderWidth: 1, borderColor: colors.surface600, gap: Spacing.md },
+    panelTitle: { fontSize: FontSize.md, fontWeight: '800', color: colors.text },
+    modeGrid: { flexDirection: 'row', gap: Spacing.sm },
+    modeBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs, backgroundColor: colors.surface900, paddingVertical: Spacing.md, borderRadius: BorderRadius.md, borderWidth: 1, borderColor: colors.surface600 },
+    activeMode: { backgroundColor: colors.primary500, borderColor: colors.primary400 },
+    modeBtnText: { fontSize: FontSize.sm, fontWeight: '700', color: colors.textMuted },
+    activeModeText: { color: colors.white },
+    inputContainer: { gap: 6, marginTop: Spacing.xs },
+    inputLabel: { fontSize: FontSize.xs, fontWeight: '700', color: colors.textMuted },
+    inputWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface900, borderRadius: BorderRadius.md, borderWidth: 1, borderColor: colors.surface600, paddingHorizontal: Spacing.md },
+    inputIcon: { marginRight: Spacing.sm },
+    textInput: { flex: 1, height: 44, color: colors.text, fontSize: FontSize.md },
+    btn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, backgroundColor: colors.primary500, borderRadius: BorderRadius.lg, paddingVertical: Spacing.lg, width: '100%' },
+    disabledBtn: { opacity: 0.5 },
+    btnT: { fontSize: FontSize.lg, fontWeight: '700', color: colors.white },
+    perm: { fontSize: FontSize.md, color: colors.textMuted, marginVertical: Spacing.xl, textAlign: 'center', lineHeight: 22 },
+    res: { padding: Spacing.lg, gap: Spacing.lg },
+    ok: { flexDirection: 'row', alignSelf: 'center', alignItems: 'center', gap: Spacing.sm, backgroundColor: colors.success500 + '15', borderRadius: BorderRadius.lg, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md },
+    okT: { fontSize: FontSize.md, fontWeight: '700', color: colors.success500 },
+    card: { backgroundColor: colors.surface800, borderRadius: BorderRadius.xl, padding: Spacing.xl, borderWidth: 1, borderColor: colors.surface600 },
+    lbl: { fontSize: FontSize.xs, fontWeight: '700', color: colors.textMuted, marginBottom: 6, letterSpacing: 1 },
+    val: { fontSize: FontSize.xl, fontWeight: '800', color: colors.text },
+    sub: { fontSize: FontSize.sm, color: colors.textMuted, marginTop: 4 },
+    netStatus: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs, alignSelf: 'center', paddingHorizontal: Spacing.md, paddingVertical: 4, borderRadius: BorderRadius.full },
+    netStatusText: { fontSize: FontSize.xs, fontWeight: '700' },
 
-  // Offline Queue UI
-  queueContainer: { backgroundColor: Colors.surface800, borderRadius: BorderRadius.xl, borderWidth: 1, borderColor: Colors.surface600, overflow: 'hidden' },
-  queueHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: Spacing.lg },
-  queueTitleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, flex: 1 },
-  queueTitle: { fontSize: FontSize.md, fontWeight: '700', color: Colors.white },
-  qBadge: { backgroundColor: Colors.warning500, paddingHorizontal: 6, paddingVertical: 2, borderRadius: BorderRadius.full },
-  qBadgeText: { fontSize: FontSize.xs, fontWeight: '800', color: Colors.surface900 },
-  queueContent: { borderTopWidth: 1, borderTopColor: Colors.surface600, padding: Spacing.md, gap: Spacing.md },
-  queueActions: { flexDirection: 'row', gap: Spacing.sm },
-  qActionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs, backgroundColor: Colors.primary500, paddingVertical: Spacing.sm, borderRadius: BorderRadius.md },
-  qActionText: { color: Colors.white, fontSize: FontSize.xs, fontWeight: '700' },
-  qEmpty: { alignItems: 'center', paddingVertical: Spacing.xl, gap: Spacing.sm },
-  qEmptyText: { fontSize: FontSize.xs, color: Colors.surface400 },
-  qItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: Spacing.md, borderBottomWidth: 1, borderBottomColor: Colors.surface700 },
-  qLeft: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, flex: 1 },
-  qTitle: { fontSize: FontSize.sm, fontWeight: '700', color: Colors.white },
-  qPayload: { fontSize: FontSize.xs, color: Colors.surface400, marginTop: 2, width: '90%' },
-  qError: { fontSize: FontSize.xs, color: Colors.danger500, marginTop: 2, fontWeight: '600' },
-  qTime: { fontSize: FontSize.xs, color: Colors.surface400 },
-});
+    // Offline Queue UI
+    queueContainer: { backgroundColor: colors.surface800, borderRadius: BorderRadius.xl, borderWidth: 1, borderColor: colors.surface600, overflow: 'hidden' },
+    queueHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: Spacing.lg },
+    queueTitleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, flex: 1 },
+    queueTitle: { fontSize: FontSize.md, fontWeight: '700', color: colors.text },
+    qBadge: { backgroundColor: colors.warning500, paddingHorizontal: 6, paddingVertical: 2, borderRadius: BorderRadius.full },
+    qBadgeText: { fontSize: FontSize.xs, fontWeight: '800', color: colors.surface900 },
+    queueContent: { borderTopWidth: 1, borderTopColor: colors.surface600, padding: Spacing.md, gap: Spacing.md },
+    queueActions: { flexDirection: 'row', gap: Spacing.sm },
+    qActionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs, backgroundColor: colors.primary500, paddingVertical: Spacing.sm, borderRadius: BorderRadius.md },
+    qActionText: { color: colors.white, fontSize: FontSize.xs, fontWeight: '700' },
+    qEmpty: { alignItems: 'center', paddingVertical: Spacing.xl, gap: Spacing.sm },
+    qEmptyText: { fontSize: FontSize.xs, color: colors.textMuted },
+    qItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: Spacing.md, borderBottomWidth: 1, borderBottomColor: colors.surface600 },
+    qLeft: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, flex: 1 },
+    qTitle: { fontSize: FontSize.sm, fontWeight: '700', color: colors.text },
+    qPayload: { fontSize: FontSize.xs, color: colors.textMuted, marginTop: 2, width: '90%' },
+    qError: { fontSize: FontSize.xs, color: colors.danger500, marginTop: 2, fontWeight: '600' },
+    qTime: { fontSize: FontSize.xs, color: colors.textMuted },
+
+    // Traceability & Adjustments UI
+    loadingCard: { backgroundColor: colors.surface800, borderRadius: BorderRadius.xl, padding: Spacing.xl, borderWidth: 1, borderColor: colors.surface600, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: Spacing.md },
+    loadingCardText: { color: colors.textMuted, fontSize: FontSize.sm },
+    traceRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: Spacing.xs, borderBottomWidth: 1, borderBottomColor: colors.surface600 },
+    traceLabel: { color: colors.textMuted, fontSize: FontSize.sm, fontWeight: '600' },
+    traceVal: { color: colors.text, fontSize: FontSize.sm, fontWeight: '700' },
+    sectionSubtitle: { color: colors.text, fontSize: FontSize.sm, fontWeight: '800', marginTop: Spacing.sm, marginBottom: 4 },
+    adjustmentGrid: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.xs },
+    adjustBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs, paddingVertical: Spacing.md, borderRadius: BorderRadius.md },
+    adjustBtnText: { color: colors.white, fontSize: FontSize.xs, fontWeight: '700' },
+    badge: { paddingHorizontal: Spacing.sm, paddingVertical: 4, borderRadius: BorderRadius.full },
+    badgeSuccess: { backgroundColor: colors.success500 + '20' },
+    badgeWarning: { backgroundColor: colors.warning500 + '20' },
+    badgeDanger: { backgroundColor: colors.danger500 + '20' },
+    badgeSecondary: { backgroundColor: colors.surface500 },
+    badgeText: { fontSize: FontSize.xs, fontWeight: '800' },
+    logItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: Spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.surface600 },
+    logTitle: { color: colors.text, fontSize: FontSize.sm, fontWeight: '700' },
+    logSub: { color: colors.textMuted, fontSize: FontSize.xs, marginTop: 2 },
+    logTypeBadge: { fontSize: FontSize.xs, color: colors.primary400, fontWeight: '700', backgroundColor: colors.primary500 + '15', paddingHorizontal: Spacing.sm, paddingVertical: 2, borderRadius: BorderRadius.sm },
+
+    // Anomalies list UI
+    anomalyItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: Spacing.md, borderBottomWidth: 1, borderBottomColor: colors.surface600 },
+    anomalyBookTitle: { fontSize: FontSize.sm, fontWeight: '700', color: colors.text },
+    anomalyBookCode: { fontSize: FontSize.xs, color: colors.textMuted, marginTop: 2 },
+    anomalyDesc: { fontSize: FontSize.xs, color: colors.accent500, marginTop: 4 },
+    anomalyBadge: { backgroundColor: colors.danger500 + '20', paddingHorizontal: Spacing.sm, paddingVertical: 4, borderRadius: BorderRadius.sm },
+    anomalyBadgeText: { fontSize: FontSize.xs, color: colors.danger500, fontWeight: '800' },
+
+    // Control panel UI
+    controlPanelDesc: { fontSize: FontSize.xs, color: colors.textMuted, lineHeight: 18 },
+    auditActionBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, backgroundColor: colors.primary500, borderRadius: BorderRadius.md, paddingVertical: Spacing.lg, width: '100%' },
+    auditActionText: { color: colors.white, fontSize: FontSize.sm, fontWeight: '700' },
+  });

@@ -1,6 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 
-let db: any = null;
+// Use global storage to prevent multiple initialization and pointer invalidation issues during Fast Refresh / HMR
+let db: any = (global as any).sqliteDb || null;
 
 export interface CachedBook {
   book_id: number;
@@ -25,9 +26,33 @@ export interface OfflineScan {
 }
 
 /**
+ * Handle database errors. If a JNI pointer/connection error is detected,
+ * resets the connection singleton so that it will self-heal and re-initialize on the next query.
+ */
+const handleDatabaseError = (error: any, operationName: string) => {
+  console.error(`[SQLite] Error in ${operationName}:`, error);
+  const errorStr = String(error);
+  if (
+    errorStr.includes('NullPointerException') || 
+    errorStr.includes('NativeDatabase') || 
+    errorStr.includes('prepareSync') || 
+    errorStr.includes('closed') ||
+    errorStr.includes('rejected')
+  ) {
+    console.warn('[SQLite] Native database reference is corrupted or closed. Resetting db connection instance.');
+    db = null;
+    (global as any).sqliteDb = null;
+  }
+};
+
+/**
  * Initialize SQLite database and tables.
  */
 export const initDatabase = (): void => {
+  if (db) {
+    console.log('[SQLite] Database already initialized');
+    return;
+  }
   try {
     db = SQLite.openDatabaseSync('perpustakaan_digital.db');
     
@@ -59,17 +84,30 @@ export const initDatabase = (): void => {
       );
     `);
 
+    (global as any).sqliteDb = db;
     console.log('[SQLite] Database initialized successfully');
   } catch (error) {
+    db = null;
+    (global as any).sqliteDb = null;
     console.error('[SQLite] Failed to initialize database:', error);
   }
+};
+
+/**
+ * Check and ensure database connection is healthy before executing any queries.
+ */
+const ensureDatabase = (): boolean => {
+  if (!db) {
+    initDatabase();
+  }
+  return db !== null;
 };
 
 /**
  * Cache books from online list into offline SQLite.
  */
 export const cacheBooks = (books: CachedBook[]): void => {
-  if (!db) return;
+  if (!ensureDatabase()) return;
   try {
     // Truncate existing books
     db.execSync('DELETE FROM books;');
@@ -90,7 +128,7 @@ export const cacheBooks = (books: CachedBook[]): void => {
     }
     console.log(`[SQLite] Cached ${books.length} books successfully`);
   } catch (error) {
-    console.error('[SQLite] Failed to cache books:', error);
+    handleDatabaseError(error, 'cacheBooks');
   }
 };
 
@@ -98,7 +136,7 @@ export const cacheBooks = (books: CachedBook[]): void => {
  * Retrieve books from local SQLite cache.
  */
 export const getCachedBooks = (searchQuery?: string): CachedBook[] => {
-  if (!db) return [];
+  if (!ensureDatabase()) return [];
   try {
     if (searchQuery) {
       return db.getAllSync(
@@ -109,7 +147,7 @@ export const getCachedBooks = (searchQuery?: string): CachedBook[] => {
     }
     return db.getAllSync('SELECT * FROM books ORDER BY book_id DESC;') as CachedBook[];
   } catch (error) {
-    console.error('[SQLite] Failed to fetch cached books:', error);
+    handleDatabaseError(error, 'getCachedBooks');
     return [];
   }
 };
@@ -118,7 +156,7 @@ export const getCachedBooks = (searchQuery?: string): CachedBook[] => {
  * Queue a scanned transaction offline when connection is unavailable.
  */
 export const queueOfflineScan = (scan: Omit<OfflineScan, 'timestamp' | 'sync_status'>): void => {
-  if (!db) return;
+  if (!ensureDatabase()) return;
   try {
     const timestamp = new Date().toISOString();
     db.runSync(
@@ -133,7 +171,7 @@ export const queueOfflineScan = (scan: Omit<OfflineScan, 'timestamp' | 'sync_sta
     );
     console.log('[SQLite] Queued offline scan successfully:', scan.qr_payload);
   } catch (error) {
-    console.error('[SQLite] Failed to queue offline scan:', error);
+    handleDatabaseError(error, 'queueOfflineScan');
     throw error;
   }
 };
@@ -142,11 +180,11 @@ export const queueOfflineScan = (scan: Omit<OfflineScan, 'timestamp' | 'sync_sta
  * Get all pending offline scans for syncing.
  */
 export const getPendingScans = (): OfflineScan[] => {
-  if (!db) return [];
+  if (!ensureDatabase()) return [];
   try {
     return db.getAllSync("SELECT * FROM offline_scans WHERE sync_status = 'pending' ORDER BY id ASC;") as OfflineScan[];
   } catch (error) {
-    console.error('[SQLite] Failed to fetch pending scans:', error);
+    handleDatabaseError(error, 'getPendingScans');
     return [];
   }
 };
@@ -155,11 +193,11 @@ export const getPendingScans = (): OfflineScan[] => {
  * Get all queued scans (for queue manager UI).
  */
 export const getAllScans = (): OfflineScan[] => {
-  if (!db) return [];
+  if (!ensureDatabase()) return [];
   try {
     return db.getAllSync('SELECT * FROM offline_scans ORDER BY id DESC;') as OfflineScan[];
   } catch (error) {
-    console.error('[SQLite] Failed to fetch all scans:', error);
+    handleDatabaseError(error, 'getAllScans');
     return [];
   }
 };
@@ -168,12 +206,12 @@ export const getAllScans = (): OfflineScan[] => {
  * Mark a queued scan as successfully synchronized.
  */
 export const markScanSynced = (id: number): void => {
-  if (!db) return;
+  if (!ensureDatabase()) return;
   try {
     db.runSync("UPDATE offline_scans SET sync_status = 'synced', error_message = NULL WHERE id = ?;", id);
     console.log(`[SQLite] Scan id=${id} marked as synced`);
   } catch (error) {
-    console.error('[SQLite] Failed to mark scan synced:', error);
+    handleDatabaseError(error, 'markScanSynced');
   }
 };
 
@@ -181,12 +219,12 @@ export const markScanSynced = (id: number): void => {
  * Mark a queued scan as failed with validation error.
  */
 export const markScanFailed = (id: number, errorMessage: string): void => {
-  if (!db) return;
+  if (!ensureDatabase()) return;
   try {
     db.runSync("UPDATE offline_scans SET sync_status = 'failed', error_message = ? WHERE id = ?;", errorMessage, id);
     console.log(`[SQLite] Scan id=${id} marked as failed:`, errorMessage);
   } catch (error) {
-    console.error('[SQLite] Failed to mark scan failed:', error);
+    handleDatabaseError(error, 'markScanFailed');
   }
 };
 
@@ -194,11 +232,11 @@ export const markScanFailed = (id: number, errorMessage: string): void => {
  * Clear synced items from scans queue.
  */
 export const clearSyncedScans = (): void => {
-  if (!db) return;
+  if (!ensureDatabase()) return;
   try {
     db.runSync("DELETE FROM offline_scans WHERE sync_status = 'synced';");
     console.log('[SQLite] Cleared all synced scans from queue');
   } catch (error) {
-    console.error('[SQLite] Failed to clear synced scans:', error);
+    handleDatabaseError(error, 'clearSyncedScans');
   }
 };

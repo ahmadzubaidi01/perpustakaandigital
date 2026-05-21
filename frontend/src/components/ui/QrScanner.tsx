@@ -15,6 +15,9 @@ interface QrScannerProps {
   continuous?: boolean;
 }
 
+let globalHtml5Qrcode: Html5Qrcode | null = null;
+let globalInitializationPromise: Promise<any> | null = null;
+
 export const QrScanner: React.FC<QrScannerProps> = ({
   onScanSuccess,
   onScanFailure,
@@ -93,24 +96,40 @@ export const QrScanner: React.FC<QrScannerProps> = ({
   useEffect(() => {
     if (!activeCameraId) return;
 
+    let active = true;
     setIsInitializing(true);
     setErrorMsg(null);
 
     // Ensure previous instance is stopped completely
     const stopPrevious = async () => {
-      if (html5QrcodeRef.current) {
-        if (html5QrcodeRef.current.isScanning) {
-          await html5QrcodeRef.current.stop();
+      if (globalInitializationPromise) {
+        try {
+          await globalInitializationPromise;
+        } catch (e) {
+          // Ignore errors from previous instance startup/shutdown
         }
-        html5QrcodeRef.current = null;
+      }
+      if (globalHtml5Qrcode) {
+        try {
+          if (globalHtml5Qrcode.isScanning) {
+            await globalHtml5Qrcode.stop();
+          }
+        } catch (err) {
+          console.warn('Failed to stop global scanner:', err);
+        }
+        globalHtml5Qrcode = null;
+        globalInitializationPromise = null;
       }
     };
 
     stopPrevious().then(() => {
+      if (!active) return;
+
       const html5Qrcode = new Html5Qrcode(containerId);
+      globalHtml5Qrcode = html5Qrcode;
       html5QrcodeRef.current = html5Qrcode;
 
-      html5Qrcode
+      const startPromise = html5Qrcode
         .start(
           activeCameraId,
           {
@@ -153,6 +172,14 @@ export const QrScanner: React.FC<QrScannerProps> = ({
           }
         )
         .then(() => {
+          if (!active) {
+            // If component was unmounted while starting, stop it
+            if (html5Qrcode.isScanning) {
+              html5Qrcode.stop().catch(() => {});
+            }
+            return;
+          }
+
           setIsInitializing(false);
           // Check for flashlight capability via video tracks
           try {
@@ -166,15 +193,27 @@ export const QrScanner: React.FC<QrScannerProps> = ({
           }
         })
         .catch((err) => {
+          if (!active) return;
           setErrorMsg('Gagal memulai scanner kamera: ' + (err.message || err));
           setIsInitializing(false);
         });
+
+      globalInitializationPromise = startPromise;
     });
 
     return () => {
+      active = false;
       if (html5QrcodeRef.current) {
         if (html5QrcodeRef.current.isScanning) {
-          html5QrcodeRef.current.stop().catch(() => {});
+          const stopPromise = html5QrcodeRef.current.stop()
+            .then(() => {
+              if (globalHtml5Qrcode === html5QrcodeRef.current) {
+                globalHtml5Qrcode = null;
+                globalInitializationPromise = null;
+              }
+            })
+            .catch(() => {});
+          globalInitializationPromise = stopPromise;
         }
       }
     };

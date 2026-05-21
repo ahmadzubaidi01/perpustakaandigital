@@ -129,7 +129,7 @@ export const dashboardAPI = {
 export const qrAPI = {
   list: (params?: any) => api.get('/v1/qr', { params }),
   get: (id: number) => api.get(`/v1/qr/${id}`),
-  generate: (data: { book_id: number; quantity: number }) =>
+  generate: (data: { book_id: number; quantity: number; custom_serial?: string }) =>
     api.post('/v1/qr/generate', data),
   scan: (data: { qr_payload: string; scan_type?: string; latitude?: number; longitude?: number }) =>
     api.post('/v1/qr/scan', data),

@@ -1,10 +1,14 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, FontSize, BorderRadius } from '../../constants/theme';
+import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 import { authAPI } from '../../services/api';
+import { useTheme } from '../../context/ThemeContext';
 
 export default function RegisterScreen({ navigation }: any) {
+  const { colors } = useTheme();
+  const styles = getStyles(colors);
+
   const [form, setForm] = useState({ full_name: '', email_address: '', password: '', confirm_password: '', student_id_number: '', class_name: '' });
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -29,7 +33,7 @@ export default function RegisterScreen({ navigation }: any) {
     <View style={styles.inputGroup}>
       <Text style={styles.label}>{label}</Text>
       <View style={styles.inputContainer}>
-        <TextInput style={styles.input} placeholder={placeholder} placeholderTextColor={Colors.surface400} value={(form as any)[keyName]} onChangeText={(v) => update(keyName, v)} secureTextEntry={secure && !showPassword} keyboardType={keyboard} autoCapitalize={keyboard === 'email-address' ? 'none' : 'words'} />
+        <TextInput style={styles.input} placeholder={placeholder} placeholderTextColor={colors.surface400} value={(form as any)[keyName]} onChangeText={(v) => update(keyName, v)} secureTextEntry={secure && !showPassword} keyboardType={keyboard} autoCapitalize={keyboard === 'email-address' ? 'none' : 'words'} />
       </View>
     </View>
   );
@@ -38,7 +42,7 @@ export default function RegisterScreen({ navigation }: any) {
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={styles.logoContainer}>
-          <View style={styles.logoBox}><Ionicons name="person-add" size={32} color={Colors.white} /></View>
+          <View style={styles.logoBox}><Ionicons name="person-add" size={32} color={colors.white} /></View>
           <Text style={styles.title}>Daftar Akun</Text>
           <Text style={styles.subtitle}>Buat akun untuk meminjam buku</Text>
         </View>
@@ -52,7 +56,7 @@ export default function RegisterScreen({ navigation }: any) {
           <Field label="KONFIRMASI PASSWORD" keyName="confirm_password" placeholder="Ulangi password" secure />
 
           <TouchableOpacity style={styles.button} onPress={handleRegister} disabled={loading} activeOpacity={0.8}>
-            {loading ? <ActivityIndicator color={Colors.white} /> : <Text style={styles.buttonText}>Daftar</Text>}
+            {loading ? <ActivityIndicator color={colors.white} /> : <Text style={styles.buttonText}>Daftar</Text>}
           </TouchableOpacity>
 
           <View style={styles.linkRow}>
@@ -65,21 +69,22 @@ export default function RegisterScreen({ navigation }: any) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.surface900 },
-  scroll: { flexGrow: 1, paddingHorizontal: Spacing.xxl, paddingVertical: Spacing.xxxl },
-  logoContainer: { alignItems: 'center', marginBottom: Spacing.xxl },
-  logoBox: { width: 64, height: 64, borderRadius: BorderRadius.xl, backgroundColor: Colors.primary500, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.lg },
-  title: { fontSize: FontSize.xxl, fontWeight: '800', color: Colors.white },
-  subtitle: { fontSize: FontSize.md, color: Colors.surface300, marginTop: Spacing.xs },
-  form: { backgroundColor: Colors.surface800, borderRadius: BorderRadius.xl, padding: Spacing.xxl, borderWidth: 1, borderColor: Colors.surface600 },
-  inputGroup: { marginBottom: Spacing.lg },
-  label: { fontSize: FontSize.xs, fontWeight: '700', color: Colors.surface200, letterSpacing: 0.5, marginBottom: Spacing.sm },
-  inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.surface700, borderRadius: BorderRadius.md, borderWidth: 1, borderColor: Colors.surface500, paddingHorizontal: Spacing.md },
-  input: { flex: 1, height: 48, fontSize: FontSize.md, color: Colors.text },
-  button: { backgroundColor: Colors.primary500, borderRadius: BorderRadius.md, height: 52, alignItems: 'center', justifyContent: 'center', marginTop: Spacing.lg },
-  buttonText: { fontSize: FontSize.lg, fontWeight: '700', color: Colors.white },
-  linkRow: { flexDirection: 'row', justifyContent: 'center', marginTop: Spacing.xl },
-  linkText: { fontSize: FontSize.md, color: Colors.surface300 },
-  link: { fontSize: FontSize.md, fontWeight: '700', color: Colors.primary400 },
-});
+const getStyles = (colors: any) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.surface900 },
+    scroll: { flexGrow: 1, paddingHorizontal: Spacing.xxl, paddingVertical: Spacing.xxxl },
+    logoContainer: { alignItems: 'center', marginBottom: Spacing.xxl },
+    logoBox: { width: 64, height: 64, borderRadius: BorderRadius.xl, backgroundColor: colors.primary500, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.lg },
+    title: { fontSize: FontSize.xxl, fontWeight: '800', color: colors.text },
+    subtitle: { fontSize: FontSize.md, color: colors.textMuted, marginTop: Spacing.xs },
+    form: { backgroundColor: colors.surface800, borderRadius: BorderRadius.xl, padding: Spacing.xxl, borderWidth: 1, borderColor: colors.surface600 },
+    inputGroup: { marginBottom: Spacing.lg },
+    label: { fontSize: FontSize.xs, fontWeight: '700', color: colors.textMuted, letterSpacing: 0.5, marginBottom: Spacing.sm },
+    inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface700, borderRadius: BorderRadius.md, borderWidth: 1, borderColor: colors.surface600, paddingHorizontal: Spacing.md },
+    input: { flex: 1, height: 48, fontSize: FontSize.md, color: colors.text },
+    button: { backgroundColor: colors.primary500, borderRadius: BorderRadius.md, height: 52, alignItems: 'center', justifyContent: 'center', marginTop: Spacing.lg },
+    buttonText: { fontSize: FontSize.lg, fontWeight: '700', color: colors.white },
+    linkRow: { flexDirection: 'row', justifyContent: 'center', marginTop: Spacing.xl },
+    linkText: { fontSize: FontSize.md, color: colors.textMuted },
+    link: { fontSize: FontSize.md, fontWeight: '700', color: colors.primary400 },
+  });

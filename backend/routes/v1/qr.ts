@@ -10,7 +10,7 @@ import Joi from 'joi';
 const router = Router();
 
 const scanSchema = { body: Joi.object({ qr_payload: Joi.string().required(), scan_type: Joi.string().valid('borrowing', 'returning', 'verification', 'inventory', 'audit').optional(), latitude: Joi.number().min(-90).max(90).allow(null).optional(), longitude: Joi.number().min(-180).max(180).allow(null).optional() }) };
-const generateSchema = { body: Joi.object({ book_id: Joi.number().integer().positive().required(), quantity: Joi.number().integer().min(1).max(100).required() }) };
+const generateSchema = { body: Joi.object({ book_id: Joi.number().integer().positive().required(), quantity: Joi.number().integer().min(1).max(100).required(), custom_serial: Joi.string().max(50).optional().allow('', null) }) };
 
 router.get('/', authenticate, listBookQrs);
 router.get('/scan-logs', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), getScanLogs);

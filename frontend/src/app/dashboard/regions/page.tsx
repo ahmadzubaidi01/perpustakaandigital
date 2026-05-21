@@ -35,6 +35,8 @@ export default function RegionsPage() {
   const [formData, setFormData] = useState({ name: '' });
   const [saving, setSaving] = useState(false);
 
+  const selectedRegencyName = regencies.find(r => r.regency_id === selectedRegency)?.regency_name || '';
+
   const fetchRegencies = useCallback(async () => {
     try {
       const r = await regionsAPI.listRegencies();
@@ -146,7 +148,7 @@ export default function RegionsPage() {
         description="Kelola hierarki kabupaten dan kecamatan"
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className={cn("grid grid-cols-1 gap-6 transition-all duration-300", selectedRegency ? "lg:grid-cols-2" : "max-w-xl mx-auto")}>
         {/* Regency List */}
         <Card hoverable={false} className="p-6">
           <div className="flex items-center justify-between mb-4">
@@ -180,7 +182,7 @@ export default function RegionsPage() {
                     )}
                   >
                     <button
-                      onClick={() => setSelectedRegency(r.regency_id)}
+                      onClick={() => setSelectedRegency(isSelected ? null : r.regency_id)}
                       className="flex-1 flex items-center gap-3 text-left w-full bg-transparent border-none cursor-pointer outline-none"
                     >
                       <MapPin
@@ -221,21 +223,21 @@ export default function RegionsPage() {
         </Card>
 
         {/* District List */}
-        <Card hoverable={false} className="p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-bold text-foreground">Kecamatan</h2>
-            {canManageDistricts && selectedRegency && (
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => { setEditingData(null); setFormData({ name: '' }); setShowDistrictModal(true); }}
-              >
-                <Plus size={16} /> Tambah
-              </Button>
-            )}
-          </div>
-          {selectedRegency ? (
-            districts.length ? (
+        {selectedRegency && (
+          <Card hoverable={false} className="p-6 animate-fade-in">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-foreground">Kecamatan — {selectedRegencyName}</h2>
+              {canManageDistricts && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => { setEditingData(null); setFormData({ name: '' }); setShowDistrictModal(true); }}
+                >
+                  <Plus size={16} /> Tambah
+                </Button>
+              )}
+            </div>
+            {districts.length ? (
               <div className="space-y-3">
                 {districts.map((d) => (
                   <div
@@ -273,15 +275,9 @@ export default function RegionsPage() {
               </div>
             ) : (
               <EmptyState icon={MapPin} title="Belum ada kecamatan" />
-            )
-          ) : (
-            <EmptyState
-              icon={MapPin}
-              title="Pilih kabupaten"
-              description="Pilih salah satu kabupaten untuk melihat daftar kecamatan"
-            />
-          )}
-        </Card>
+            )}
+          </Card>
+        )}
       </div>
 
       {/* Regency Modal */}

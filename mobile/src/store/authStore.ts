@@ -12,6 +12,8 @@ export interface User {
   class_name: string | null;
   member_qr_uuid: string | null;
   school_id: number | null;
+  regency_id?: number | null;
+  district_id?: number | null;
   school?: { school_id: number; school_name: string } | null;
 }
 

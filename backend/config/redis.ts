@@ -3,6 +3,10 @@ import env from './environment';
 import logger from '../utils/logger';
 
 let redisClient: RedisClientType;
+let lastErrorLoggedTime = 0;
+let lastReconnectingLoggedTime = 0;
+let lastAttemptLoggedTime = 0;
+const LOG_COOLDOWN_MS = 300000; // 5 minutes (300,000 ms)
 
 const initRedis = async (): Promise<RedisClientType> => {
   redisClient = createClient({
@@ -10,12 +14,18 @@ const initRedis = async (): Promise<RedisClientType> => {
       host: env.REDIS_HOST,
       port: env.REDIS_PORT,
       reconnectStrategy: (retries: number) => {
-        if (retries > 10) {
-          logger.error('Redis: Max reconnection attempts reached');
-          return new Error('Redis max reconnection attempts reached');
+        // Slow down retries exponentially to avoid high CPU and infinite rapid logs loop
+        if (retries > 5) {
+          const now = Date.now();
+          if (now - lastAttemptLoggedTime > LOG_COOLDOWN_MS) {
+            logger.warn(`Redis: Reconnection attempt #${retries}. Retrying in 15s to prevent logs loop.`);
+            lastAttemptLoggedTime = now;
+          }
+          return 15000; // Wait 15 seconds between retries after 5 attempts
         }
-        return Math.min(retries * 100, 3000);
+        return Math.min(retries * 500, 5000);
       },
+      connectTimeout: 3000, // Timeout after 3 seconds to avoid hanging startup
     },
     password: env.REDIS_PASSWORD || undefined,
     database: env.REDIS_DB,
@@ -23,17 +33,39 @@ const initRedis = async (): Promise<RedisClientType> => {
 
   redisClient.on('connect', () => {
     logger.info('Redis: Connected successfully');
+    // Reset cooldowns on successful connection
+    lastErrorLoggedTime = 0;
+    lastReconnectingLoggedTime = 0;
+    lastAttemptLoggedTime = 0;
   });
 
   redisClient.on('error', (err) => {
-    logger.error('Redis: Connection error', { error: err.message });
+    // Only log as warning to prevent winston from classifying it as fatal unhandled error in some flows
+    const now = Date.now();
+    if (now - lastErrorLoggedTime > LOG_COOLDOWN_MS) {
+      logger.warn('Redis: Connection error', { error: err.message });
+      lastErrorLoggedTime = now;
+    }
   });
 
   redisClient.on('reconnecting', () => {
-    logger.warn('Redis: Reconnecting...');
+    const now = Date.now();
+    if (now - lastReconnectingLoggedTime > LOG_COOLDOWN_MS) {
+      logger.warn('Redis: Reconnecting...');
+      lastReconnectingLoggedTime = now;
+    }
   });
 
-  await redisClient.connect();
+  // Non-blocking connection boot: execute connect in the background
+  // to prevent block/hanging of the main server startup when Redis is down
+  Promise.resolve().then(async () => {
+    try {
+      await redisClient.connect();
+    } catch (err: any) {
+      logger.warn('Redis: Initial background connection attempt failed. Running without cache.', { error: err.message });
+    }
+  });
+
   return redisClient;
 };
 

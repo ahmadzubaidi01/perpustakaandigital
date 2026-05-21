@@ -57,6 +57,9 @@ export const authAPI = {
 export const booksAPI = {
   list: (params?: any) => api.get('/v1/books', { params }),
   get: (id: number) => api.get(`/v1/books/${id}`),
+  create: (data: any) => api.post('/v1/books', data),
+  update: (id: number, data: any) => api.put(`/v1/books/${id}`, data),
+  delete: (id: number) => api.delete(`/v1/books/${id}`),
 };
 
 // Borrowings API
@@ -71,8 +74,16 @@ export const borrowingsAPI = {
 
 // QR API
 export const qrAPI = {
+  list: (params?: any) => api.get('/v1/qr', { params }),
+  get: (id: number) => api.get(`/v1/qr/${id}`),
+  generate: (data: { book_id: number; quantity: number; custom_serial?: string }) =>
+    api.post('/v1/qr/generate', data),
   scan: (data: { qr_payload: string; scan_type?: string; latitude?: number; longitude?: number }) =>
     api.post('/v1/qr/scan', data),
+  download: (id: number) => api.get(`/v1/qr/${id}/download`),
+  scanLogs: (params?: any) => api.get('/v1/qr/scan-logs', { params }),
+  updateStatus: (id: number, status: string) => api.patch(`/v1/qr/${id}/status`, { qr_status: status }),
+  delete: (id: number) => api.delete(`/v1/qr/${id}`),
 };
 
 // Notifications API
@@ -84,8 +95,12 @@ export const notificationsAPI = {
 
 // Dashboard API
 export const dashboardAPI = {
+  superAdmin: () => api.get('/v1/dashboard/super-admin'),
+  regencyAdmin: () => api.get('/v1/dashboard/regency-admin'),
+  districtAdmin: () => api.get('/v1/dashboard/district-admin'),
   schoolAdmin: () => api.get('/v1/dashboard/school-admin'),
 };
+
 
 // Chat API
 export const chatAPI = {
@@ -112,4 +127,61 @@ export const inventoryAPI = {
   bulkUpdateStatus: (qr_ids: number[], qr_status: string, notes?: string) =>
     api.patch('/v1/inventory/qr/bulk-status', { qr_ids, qr_status, notes }),
 };
+
+// Users API
+export const usersAPI = {
+  list: (params?: any) => api.get('/v1/users', { params }),
+  get: (id: number) => api.get(`/v1/users/${id}`),
+  create: (data: any) => api.post('/v1/users', data),
+  update: (id: number, data: any) => api.put(`/v1/users/${id}`, data),
+  delete: (id: number) => api.delete(`/v1/users/${id}`),
+  changePassword: (data: any) => api.put('/v1/users/change-password', data),
+};
+
+// Regions & Schools API
+export const regionsAPI = {
+  listSchools: (params?: any) => api.get('/v1/regions/schools', { params }),
+  getSchool: (id: number) => api.get(`/v1/regions/schools/${id}`),
+  createSchool: (data: any) => api.post('/v1/regions/schools', data),
+  updateSchool: (id: number, data: any) => api.put(`/v1/regions/schools/${id}`, data),
+  deleteSchool: (id: number) => api.delete(`/v1/regions/schools/${id}`),
+
+  listRegencies: (params?: any) => api.get('/v1/regions/regencies', { params }),
+  createRegency: (data: any) => api.post('/v1/regions/regencies', data),
+  updateRegency: (id: number, data: any) => api.put(`/v1/regions/regencies/${id}`, data),
+  deleteRegency: (id: number) => api.delete(`/v1/regions/regencies/${id}`),
+
+  listDistricts: (params?: any) => api.get('/v1/regions/districts', { params }),
+  createDistrict: (data: any) => api.post('/v1/regions/districts', data),
+  updateDistrict: (id: number, data: any) => api.put(`/v1/regions/districts/${id}`, data),
+  deleteDistrict: (id: number) => api.delete(`/v1/regions/districts/${id}`),
+};
+
+// Categories API
+export const categoriesAPI = {
+  list: () => api.get('/v1/categories'),
+  get: (id: number) => api.get(`/v1/categories/${id}`),
+  create: (data: any) => api.post('/v1/categories', data),
+  update: (id: number, data: any) => api.put(`/v1/categories/${id}`, data),
+  delete: (id: number) => api.delete(`/v1/categories/${id}`),
+};
+
+// Reviews & Favorites API
+export const reviewsAPI = {
+  list: (params?: any) => api.get('/v1/reviews', { params }),
+  create: (data: any) => api.post('/v1/reviews', data),
+  update: (id: number, data: any) => api.put(`/v1/reviews/${id}`, data),
+  delete: (id: number) => api.delete(`/v1/reviews/${id}`),
+
+  listFavorites: () => api.get('/v1/reviews/favorites'),
+  addFavorite: (data: any) => api.post('/v1/reviews/favorites', data),
+  removeFavorite: (id: number) => api.delete(`/v1/reviews/favorites/${id}`),
+};
+
+// Library Settings API
+export const settingsAPI = {
+  get: (schoolId?: number) => api.get(schoolId ? `/v1/settings/${schoolId}` : '/v1/settings'),
+  update: (data: any, schoolId?: number) => api.put(schoolId ? `/v1/settings/${schoolId}` : '/v1/settings', data),
+};
+
 

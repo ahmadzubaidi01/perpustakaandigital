@@ -47,7 +47,9 @@
         {
           "locationWhenInUsePermission": "Izinkan akses lokasi untuk logging scan"
         }
-      ]
+      ],
+      "expo-secure-store",
+      "expo-sqlite"
     ]
   }
 }

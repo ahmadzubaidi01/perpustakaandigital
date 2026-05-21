@@ -196,13 +196,13 @@ const listBorrowings = asyncHandler(async (req: Request, res: Response): Promise
     where.user_id = req.user!.user_id;
   }
 
-  const bookInclude: any = { association: 'book', attributes: ['book_id', 'book_title', 'book_code', 'school_id'] };
+  const bookInclude: any = { association: 'book', attributes: ['book_id', 'book_title', 'book_code', 'school_id'], paranoid: false };
   if (Object.keys(schoolWhere).length > 0) {
     bookInclude.where = schoolWhere;
     bookInclude.required = true;
   }
 
-  const { count, rows } = await Borrowing.findAndCountAll({ where, include: [{ association: 'borrower', attributes: ['user_id', 'full_name', 'email_address'] }, { association: 'book_qr', required: Object.keys(schoolWhere).length > 0, include: [bookInclude] }, { association: 'approved_by', attributes: ['user_id', 'full_name'] }], order: [[pagination.sortBy, pagination.sortOrder]], limit: pagination.limit, offset: pagination.offset });
+  const { count, rows } = await Borrowing.findAndCountAll({ where, include: [{ association: 'borrower', attributes: ['user_id', 'full_name', 'email_address'] }, { association: 'book_qr', required: Object.keys(schoolWhere).length > 0, paranoid: false, include: [bookInclude] }, { association: 'approved_by', attributes: ['user_id', 'full_name'] }], order: [[pagination.sortBy, pagination.sortOrder]], limit: pagination.limit, offset: pagination.offset });
 
   apiResponse.paginated(res, 'Borrowings retrieved', rows, buildPaginationResult(count, pagination));
 });
@@ -217,7 +217,8 @@ const getBorrowing = asyncHandler(async (req: Request, res: Response): Promise<v
       { 
         association: 'book_qr', 
         required: false, 
-        include: [{ association: 'book', required: false }] 
+        paranoid: false,
+        include: [{ association: 'book', required: false, paranoid: false }] 
       },
       { association: 'approved_by', required: false, attributes: ['user_id', 'full_name'] }
     ]

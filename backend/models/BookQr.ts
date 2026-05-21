@@ -16,11 +16,12 @@ interface BookQrAttributes {
   last_scanned_by_user_id: number | null;
   created_at?: Date;
   updated_at?: Date;
+  deleted_at?: Date | null;
 }
 
 interface BookQrCreationAttributes extends Optional<BookQrAttributes,
   'book_qr_id' | 'qr_image_url' | 'qr_status' | 'notes' | 'last_scanned_at' |
-  'last_scanned_latitude' | 'last_scanned_longitude' | 'last_scanned_by_user_id'
+  'last_scanned_latitude' | 'last_scanned_longitude' | 'last_scanned_by_user_id' | 'deleted_at'
 > {}
 
 class BookQr extends Model<BookQrAttributes, BookQrCreationAttributes> implements BookQrAttributes {
@@ -37,6 +38,7 @@ class BookQr extends Model<BookQrAttributes, BookQrCreationAttributes> implement
   public last_scanned_by_user_id!: number | null;
   public readonly created_at!: Date;
   public readonly updated_at!: Date;
+  public deleted_at!: Date | null;
 
   public static associate(models: any): void {
     BookQr.belongsTo(models.Book, {
@@ -119,14 +121,21 @@ BookQr.init(
         key: 'user_id',
       },
     },
+    deleted_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      defaultValue: null,
+    },
   },
   {
     sequelize,
     tableName: 'book_qr',
     timestamps: true,
     underscored: true,
+    paranoid: true,
     createdAt: 'created_at',
     updatedAt: 'updated_at',
+    deletedAt: 'deleted_at',
     indexes: [
       { unique: true, fields: ['qr_uuid'] },
       { unique: true, fields: ['qr_serial_number'] },

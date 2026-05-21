@@ -1,8 +1,10 @@
 import React, { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
 import RootNavigator from './src/navigation/RootNavigator';
+import SocketNotificationListener from './src/components/SocketNotificationListener';
 import { useAuthStore } from './src/store/authStore';
 import { authAPI } from './src/services/api';
 import { Colors } from './src/constants/theme';
@@ -46,15 +48,33 @@ function AppContent() {
     );
   }
 
-  return <RootNavigator />;
+  return (
+    <>
+      <RootNavigator />
+      <SocketNotificationListener />
+    </>
+  );
+}
+
+import { ThemeProvider, useTheme } from './src/context/ThemeContext';
+
+function AppWithTheme() {
+  const { isDark } = useTheme();
+  return (
+    <>
+      <StatusBar style={isDark ? "light" : "dark"} />
+      <AppContent />
+    </>
+  );
 }
 
 export default function App() {
   return (
-    <>
-      <StatusBar style="light" />
-      <AppContent />
-    </>
+    <ThemeProvider>
+      <SafeAreaProvider>
+        <AppWithTheme />
+      </SafeAreaProvider>
+    </ThemeProvider>
   );
 }
 
