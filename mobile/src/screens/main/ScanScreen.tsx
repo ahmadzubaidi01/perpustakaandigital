@@ -17,7 +17,7 @@ export default function ScanScreen() {
   const { user } = useAuthStore();
   const { colors, isDark } = useTheme();
   const styles = getStyles(colors);
-  const isAdmin = user?.user_role === 'school_admin' || user?.user_role === 'super_admin';
+  const isAdmin = ['super_admin', 'regency_admin', 'district_admin', 'school_admin'].includes(user?.user_role || '');
 
   const [permission, requestPermission] = useCameraPermissions();
   const [scanning, setScanning] = useState(false);
@@ -25,6 +25,7 @@ export default function ScanScreen() {
   const [studentId, setStudentId] = useState('');
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
 
   // Student search and selection states
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
@@ -319,12 +320,54 @@ export default function ScanScreen() {
 
   const getPendingCount = () => offlineScans.filter((s) => s.sync_status === 'pending').length;
 
+  const handleStudentBorrow = async (bookQrId: number) => {
+    setActionLoading(true);
+    try {
+      await borrowingsAPI.create({ book_qr_id: bookQrId });
+      Alert.alert(
+        'Pengajuan Sukses',
+        'Pengajuan peminjaman berhasil dikirim! Menunggu persetujuan admin.',
+        [{ text: 'OK', onPress: () => { setResult(null); setTraceData(null); } }]
+      );
+    } catch (err: any) {
+      console.warn('Gagal mengajukan peminjaman:', err);
+      const errMsg = err.response?.data?.message || 'Terjadi kesalahan saat mengajukan peminjaman';
+      Alert.alert('Gagal Mengajukan', errMsg);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleStudentReserve = async (bookQrId: number) => {
+    setActionLoading(true);
+    try {
+      await borrowingsAPI.reserve({ book_qr_id: bookQrId });
+      Alert.alert(
+        'Reservasi Sukses',
+        'Reservasi buku berhasil disimpan!',
+        [{ text: 'OK', onPress: () => { setResult(null); setTraceData(null); } }]
+      );
+    } catch (err: any) {
+      console.warn('Gagal melakukan reservasi:', err);
+      const errMsg = err.response?.data?.message || 'Terjadi kesalahan saat melakukan reservasi';
+      Alert.alert('Gagal Reservasi', errMsg);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const renderStatusBadge = (status: string) => {
     switch (status) {
       case 'active':
         return (
           <View style={[styles.badge, styles.badgeSuccess]}>
-            <Text style={[styles.badgeText, { color: colors.success500 }]}>Aktif</Text>
+            <Text style={[styles.badgeText, { color: colors.success500 }]}>Tersedia</Text>
+          </View>
+        );
+      case 'inactive':
+        return (
+          <View style={[styles.badge, styles.badgeDanger]}>
+            <Text style={[styles.badgeText, { color: colors.danger500 }]}>Tidak Tersedia</Text>
           </View>
         );
       case 'damaged':
@@ -337,6 +380,18 @@ export default function ScanScreen() {
         return (
           <View style={[styles.badge, styles.badgeDanger]}>
             <Text style={[styles.badgeText, { color: colors.danger500 }]}>Hilang</Text>
+          </View>
+        );
+      case 'borrowed':
+        return (
+          <View style={[styles.badge, styles.badgeWarning]}>
+            <Text style={[styles.badgeText, { color: colors.warning500 }]}>Dipinjam</Text>
+          </View>
+        );
+      case 'maintenance':
+        return (
+          <View style={[styles.badge, styles.badgeSecondary]}>
+            <Text style={[styles.badgeText, { color: colors.textMuted }]}>Perawatan</Text>
           </View>
         );
       default:
@@ -429,123 +484,178 @@ export default function ScanScreen() {
                     <Text style={styles.sub}>Sekolah: {result.data?.book?.school?.school_name || '-'}</Text>
                   </View>
 
-                  {traceLoading ? (
-                    <View style={styles.loadingCard}>
-                      <ActivityIndicator size="small" color={colors.primary400} />
-                      <Text style={styles.loadingCardText}>Mengambil data traceability...</Text>
-                    </View>
-                  ) : traceData ? (
-                    <View style={{ gap: Spacing.md }}>
-                      {/* Status adjustments & Info Panel */}
-                      <View style={styles.card}>
-                        <Text style={styles.lbl}>INFO KONDISI FISIK & SCAN</Text>
-                        <View style={styles.traceRow}>
-                          <Text style={styles.traceLabel}>Serial:</Text>
-                          <Text style={styles.traceVal}>{traceData.qr_serial_number || '-'}</Text>
-                        </View>
-                        <View style={styles.traceRow}>
-                          <Text style={styles.traceLabel}>Status:</Text>
-                          {renderStatusBadge(traceData.qr_status)}
-                        </View>
-                        <View style={styles.traceRow}>
-                          <Text style={styles.traceLabel}>Scan Terakhir:</Text>
-                          <Text style={styles.traceVal}>
-                            {traceData.last_scanned_at ? new Date(traceData.last_scanned_at).toLocaleDateString('id-ID') : 'Belum pernah'}
-                          </Text>
-                        </View>
-                        {traceData.last_scanned_by && (
-                          <View style={styles.traceRow}>
-                            <Text style={styles.traceLabel}>Oleh Admin:</Text>
-                            <Text style={styles.traceVal}>{traceData.last_scanned_by.full_name}</Text>
-                          </View>
-                        )}
-
-                        {/* Status adjustment buttons */}
-                        {isAdmin && (
-                          <View style={{ marginTop: Spacing.md, gap: Spacing.sm }}>
-                            <Text style={styles.sectionSubtitle}>Sesuaikan Kondisi Buku (Update Status)</Text>
-                            <View style={styles.inputWrapper}>
-                              <Ionicons name="create-outline" size={16} color={colors.surface400} style={styles.inputIcon} />
-                              <TextInput
-                                style={styles.textInput}
-                                placeholder="Masukkan catatan/alasan update..."
-                                placeholderTextColor={colors.surface400}
-                                value={noteText}
-                                onChangeText={setNoteText}
-                              />
-                            </View>
-                            <View style={styles.adjustmentGrid}>
-                              <TouchableOpacity
-                                style={[styles.adjustBtn, traceData.qr_status === 'active' && styles.disabledBtn, { backgroundColor: colors.success500 }]}
-                                disabled={traceData.qr_status === 'active'}
-                                onPress={() => handleUpdateStatus('active')}
-                              >
-                                <Ionicons name="checkmark-circle-outline" size={16} color={colors.white} />
-                                <Text style={styles.adjustBtnText}>Aktifkan</Text>
-                              </TouchableOpacity>
-
-                              <TouchableOpacity
-                                style={[styles.adjustBtn, traceData.qr_status === 'damaged' && styles.disabledBtn, { backgroundColor: colors.warning500 }]}
-                                disabled={traceData.qr_status === 'damaged'}
-                                onPress={() => handleUpdateStatus('damaged')}
-                              >
-                                <Ionicons name="alert-circle-outline" size={16} color={colors.white} />
-                                <Text style={styles.adjustBtnText}>Rusak</Text>
-                              </TouchableOpacity>
-
-                              <TouchableOpacity
-                                style={[styles.adjustBtn, traceData.qr_status === 'lost' && styles.disabledBtn, { backgroundColor: colors.danger500 }]}
-                                disabled={traceData.qr_status === 'lost'}
-                                onPress={() => handleUpdateStatus('lost')}
-                              >
-                                <Ionicons name="trash-outline" size={16} color={colors.white} />
-                                <Text style={styles.adjustBtnText}>Hilang</Text>
-                              </TouchableOpacity>
-                            </View>
-                          </View>
-                        )}
+                  {!isAdmin && result.data?.book_qr && (
+                    <View style={styles.card}>
+                      <Text style={styles.lbl}>STATUS BUKU FISIK</Text>
+                      <View style={styles.traceRow}>
+                        <Text style={styles.traceLabel}>Serial:</Text>
+                        <Text style={styles.traceVal}>{result.data.book_qr.qr_serial_number || '-'}</Text>
+                      </View>
+                      <View style={styles.traceRow}>
+                        <Text style={styles.traceLabel}>Status:</Text>
+                        {renderStatusBadge(result.data.book_qr.qr_status)}
                       </View>
 
-                      {/* Borrowings history and scan log list */}
-                      {traceData.borrowings && traceData.borrowings.length > 0 && (
-                        <View style={styles.card}>
-                          <Text style={styles.lbl}>RIWAYAT PEMINJAMAN TERAKHIR</Text>
-                          {traceData.borrowings.slice(0, 5).map((b: any, index: number) => (
-                            <View key={index} style={styles.logItem}>
-                              <View style={{ flex: 1 }}>
-                                <Text style={styles.logTitle}>{b.borrower?.full_name || 'Siswa'}</Text>
-                                <Text style={styles.logSub}>
-                                  Pinjam: {new Date(b.created_at).toLocaleDateString('id-ID')}
-                                </Text>
-                              </View>
-                              <View style={[styles.badge, b.borrowing_status === 'returned' ? styles.badgeSuccess : styles.badgeWarning]}>
-                                <Text style={[styles.badgeText, { color: b.borrowing_status === 'returned' ? colors.success500 : colors.warning500 }]}>
-                                  {b.borrowing_status === 'returned' ? 'Kembali' : 'Dipinjam'}
-                                </Text>
-                              </View>
-                            </View>
-                          ))}
-                        </View>
-                      )}
+                      {result.data.book_qr.qr_status === 'active' ? (
+                        <View style={{ marginTop: Spacing.lg, gap: Spacing.md }}>
+                          <TouchableOpacity
+                            style={[styles.btn, actionLoading && styles.disabledBtn]}
+                            disabled={actionLoading}
+                            onPress={() => handleStudentBorrow(result.data.book_qr.book_qr_id)}
+                          >
+                            {actionLoading ? (
+                              <ActivityIndicator size="small" color={colors.white} />
+                            ) : (
+                              <>
+                                <Ionicons name="book-outline" size={20} color={colors.white} />
+                                <Text style={styles.btnT}>Ajukan Peminjaman</Text>
+                              </>
+                            )}
+                          </TouchableOpacity>
 
-                      {traceData.scan_logs && traceData.scan_logs.length > 0 && (
-                        <View style={styles.card}>
-                          <Text style={styles.lbl}>LOG PEMINDAIAN TERAKHIR</Text>
-                          {traceData.scan_logs.slice(0, 5).map((log: any, index: number) => (
-                            <View key={index} style={styles.logItem}>
-                              <View style={{ flex: 1 }}>
-                                <Text style={styles.logTitle}>Scanned by {log.scanned_by?.full_name || 'Admin'}</Text>
-                                <Text style={styles.logSub}>
-                                  Waktu: {new Date(log.scanned_at).toLocaleString('id-ID')}
-                                </Text>
-                              </View>
-                              <Text style={styles.logTypeBadge}>{log.scan_type}</Text>
-                            </View>
-                          ))}
+                          <TouchableOpacity
+                            style={[styles.btn, { backgroundColor: colors.accent500 }, actionLoading && styles.disabledBtn]}
+                            disabled={actionLoading}
+                            onPress={() => handleStudentReserve(result.data.book_qr.book_qr_id)}
+                          >
+                            {actionLoading ? (
+                              <ActivityIndicator size="small" color={colors.white} />
+                            ) : (
+                              <>
+                                <Ionicons name="bookmark-outline" size={20} color={colors.white} />
+                                <Text style={styles.btnT}>Reservasi Buku</Text>
+                              </>
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      ) : (
+                        <View style={[styles.ok, { backgroundColor: colors.danger500 + '15', marginTop: Spacing.md, alignSelf: 'stretch' }]}>
+                          <Ionicons name="close-circle-outline" size={20} color={colors.danger500} />
+                          <Text style={[styles.okT, { color: colors.danger500 }]}>Buku tidak tersedia untuk dipinjam</Text>
                         </View>
                       )}
                     </View>
-                  ) : null}
+                  )}
+
+                  {isAdmin && (
+                    <>
+                      {traceLoading ? (
+                        <View style={styles.loadingCard}>
+                          <ActivityIndicator size="small" color={colors.primary400} />
+                          <Text style={styles.loadingCardText}>Mengambil data traceability...</Text>
+                        </View>
+                      ) : traceData ? (
+                        <View style={{ gap: Spacing.md }}>
+                          {/* Status adjustments & Info Panel */}
+                          <View style={styles.card}>
+                            <Text style={styles.lbl}>INFO KONDISI FISIK & SCAN</Text>
+                            <View style={styles.traceRow}>
+                              <Text style={styles.traceLabel}>Serial:</Text>
+                              <Text style={styles.traceVal}>{traceData.qr_serial_number || '-'}</Text>
+                            </View>
+                            <View style={styles.traceRow}>
+                              <Text style={styles.traceLabel}>Status:</Text>
+                              {renderStatusBadge(traceData.qr_status)}
+                            </View>
+                            <View style={styles.traceRow}>
+                              <Text style={styles.traceLabel}>Scan Terakhir:</Text>
+                              <Text style={styles.traceVal}>
+                                {traceData.last_scanned_at ? new Date(traceData.last_scanned_at).toLocaleDateString('id-ID') : 'Belum pernah'}
+                              </Text>
+                            </View>
+                            {traceData.last_scanned_by && (
+                              <View style={styles.traceRow}>
+                                <Text style={styles.traceLabel}>Oleh Admin:</Text>
+                                <Text style={styles.traceVal}>{traceData.last_scanned_by.full_name}</Text>
+                              </View>
+                            )}
+
+                            {/* Status adjustment buttons */}
+                            <View style={{ marginTop: Spacing.md, gap: Spacing.sm }}>
+                              <Text style={styles.sectionSubtitle}>Sesuaikan Kondisi Buku (Update Status)</Text>
+                              <View style={styles.inputWrapper}>
+                                <Ionicons name="create-outline" size={16} color={colors.surface400} style={styles.inputIcon} />
+                                <TextInput
+                                  style={styles.textInput}
+                                  placeholder="Masukkan catatan/alasan update..."
+                                  placeholderTextColor={colors.surface400}
+                                  value={noteText}
+                                  onChangeText={setNoteText}
+                                />
+                              </View>
+                              <View style={styles.adjustmentGrid}>
+                                <TouchableOpacity
+                                  style={[styles.adjustBtn, traceData.qr_status === 'active' && styles.disabledBtn, { backgroundColor: colors.success500 }]}
+                                  disabled={traceData.qr_status === 'active'}
+                                  onPress={() => handleUpdateStatus('active')}
+                                >
+                                  <Ionicons name="checkmark-circle-outline" size={16} color={colors.white} />
+                                  <Text style={styles.adjustBtnText}>Aktifkan</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                  style={[styles.adjustBtn, traceData.qr_status === 'damaged' && styles.disabledBtn, { backgroundColor: colors.warning500 }]}
+                                  disabled={traceData.qr_status === 'damaged'}
+                                  onPress={() => handleUpdateStatus('damaged')}
+                                >
+                                  <Ionicons name="alert-circle-outline" size={16} color={colors.white} />
+                                  <Text style={styles.adjustBtnText}>Rusak</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                  style={[styles.adjustBtn, traceData.qr_status === 'lost' && styles.disabledBtn, { backgroundColor: colors.danger500 }]}
+                                  disabled={traceData.qr_status === 'lost'}
+                                  onPress={() => handleUpdateStatus('lost')}
+                                >
+                                  <Ionicons name="trash-outline" size={16} color={colors.white} />
+                                  <Text style={styles.adjustBtnText}>Hilang</Text>
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+                          </View>
+
+                          {/* Borrowings history and scan log list */}
+                          {traceData.borrowings && traceData.borrowings.length > 0 && (
+                            <View style={styles.card}>
+                              <Text style={styles.lbl}>RIWAYAT PEMINJAMAN TERAKHIR</Text>
+                              {traceData.borrowings.slice(0, 5).map((b: any, index: number) => (
+                                <View key={index} style={styles.logItem}>
+                                  <View style={{ flex: 1 }}>
+                                    <Text style={styles.logTitle}>{b.borrower?.full_name || 'Siswa'}</Text>
+                                    <Text style={styles.logSub}>
+                                      Pinjam: {new Date(b.created_at).toLocaleDateString('id-ID')}
+                                    </Text>
+                                  </View>
+                                  <View style={[styles.badge, b.borrowing_status === 'returned' ? styles.badgeSuccess : styles.badgeWarning]}>
+                                    <Text style={[styles.badgeText, { color: b.borrowing_status === 'returned' ? colors.success500 : colors.warning500 }]}>
+                                      {b.borrowing_status === 'returned' ? 'Kembali' : 'Dipinjam'}
+                                    </Text>
+                                  </View>
+                                </View>
+                              ))}
+                            </View>
+                          )}
+
+                          {traceData.scan_logs && traceData.scan_logs.length > 0 && (
+                            <View style={styles.card}>
+                              <Text style={styles.lbl}>LOG PEMINDAIAN TERAKHIR</Text>
+                              {traceData.scan_logs.slice(0, 5).map((log: any, index: number) => (
+                                <View key={index} style={styles.logItem}>
+                                  <View style={{ flex: 1 }}>
+                                    <Text style={styles.logTitle}>Scanned by {log.scanned_by?.full_name || 'Admin'}</Text>
+                                    <Text style={styles.logSub}>
+                                      Waktu: {new Date(log.scanned_at).toLocaleString('id-ID')}
+                                    </Text>
+                                  </View>
+                                  <Text style={styles.logTypeBadge}>{log.scan_type}</Text>
+                                </View>
+                              ))}
+                            </View>
+                          )}
+                        </View>
+                      ) : null}
+                    </>
+                  )}
                 </View>
               )}
 
@@ -643,7 +753,7 @@ export default function ScanScreen() {
                                   {selectedStudent.full_name}
                                 </Text>
                                 <Text style={{ fontSize: FontSize.xs, color: colors.textMuted }}>
-                                  {selectedStudent.class_name || 'Tanpa kelas'} · NIS: {selectedStudent.student_id_number || '-'}
+                                  {selectedStudent.class_name || 'Tanpa kelas'} · NISN: {selectedStudent.student_id_number || '-'}
                                 </Text>
                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginTop: 2 }}>
                                   <View style={{ backgroundColor: selectedStudent.active_borrowing_count > 0 ? colors.warning500 + '20' : colors.success500 + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
@@ -667,7 +777,7 @@ export default function ScanScreen() {
                                 )}
                                 <TextInput
                                   style={styles.textInput}
-                                  placeholder="Nama, email, atau NIS siswa..."
+                                  placeholder="Nama, email, atau NISN siswa..."
                                   placeholderTextColor={colors.surface400}
                                   value={studentSearchQuery}
                                   onChangeText={setStudentSearchQuery}
@@ -699,7 +809,7 @@ export default function ScanScreen() {
                                             {sItem.full_name}
                                           </Text>
                                           <Text style={{ fontSize: 10, color: colors.textMuted }}>
-                                            {sItem.class_name || 'Tanpa kelas'} · {sItem.student_id_number || 'Tanpa NIS'}
+                                            {sItem.class_name || 'Tanpa kelas'} · {sItem.student_id_number || 'Tanpa NISN'}
                                           </Text>
                                         </View>
                                         <View style={{ backgroundColor: sItem.active_borrowing_count > 0 ? colors.warning500 + '20' : colors.success500 + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>

@@ -108,7 +108,7 @@ export default function RegisterPage() {
           {renderField({ id: "full_name", label: "Nama Lengkap", icon: User, placeholder: "Masukkan nama lengkap", required: true })}
           {renderField({ id: "email_address", label: "Email", icon: Mail, type: "email", placeholder: "nama@email.com", required: true })}
           <div className="grid grid-cols-2 gap-3">
-            {renderField({ id: "student_id_number", label: "NIS / NISN", icon: Hash, placeholder: "Nomor induk" })}
+            {renderField({ id: "student_id_number", label: "NISN", icon: Hash, placeholder: "Nomor induk" })}
             {renderField({ id: "class_name", label: "Kelas", icon: Hash, placeholder: "Contoh: XII IPA 1" })}
           </div>
           {renderField({ id: "phone_number", label: "No. Telepon", icon: Phone, placeholder: "08xxxxxxxxxx" })}

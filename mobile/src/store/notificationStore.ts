@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { notificationsAPI, chatAPI } from '../services/api';
+import { useAuthStore } from './authStore';
 
 interface NotificationState {
   unreadCount: number; // Total unread count (system + chat)
@@ -65,14 +66,19 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       const notifs = res.data?.data || [];
       const unreadSystem = notifs.filter((n: any) => !n.is_read).length;
 
-      // 2. Fetch chat conversations and sum unread counts
+      // 2. Fetch chat conversations and sum unread counts (skip for student accounts to avoid 403)
       let unreadChat = 0;
-      try {
-        const chatRes = await chatAPI.listConversations();
-        const conversations = chatRes.data?.data || [];
-        unreadChat = conversations.reduce((sum: number, conv: any) => sum + (conv.unread_count || 0), 0);
-      } catch (err) {
-        console.warn('[NotificationStore] Failed to fetch chat conversations for count:', err);
+      const currentUser = useAuthStore.getState().user;
+      const isStudent = currentUser?.user_role === 'student_member';
+
+      if (!isStudent) {
+        try {
+          const chatRes = await chatAPI.listConversations();
+          const conversations = chatRes.data?.data || [];
+          unreadChat = conversations.reduce((sum: number, conv: any) => sum + (conv.unread_count || 0), 0);
+        } catch (err) {
+          console.warn('[NotificationStore] Failed to fetch chat conversations for count:', err);
+        }
       }
 
       const total = unreadSystem + unreadChat;

@@ -33,6 +33,36 @@ const markBookQrStatus = async (
     const oldStatus = qr.qr_status;
     await qr.update({ qr_status: newStatus, notes: notes || qr.notes }, { transaction: t });
 
+    // If status is updated to something other than ACTIVE or BORROWED (inactive, damaged, lost, maintenance),
+    // automatically close any active borrowings for this copy
+    if (newStatus !== QrStatus.ACTIVE && newStatus !== QrStatus.BORROWED) {
+      const activeBorrowings = await Borrowing.findAll({
+        where: {
+          book_qr_id: bookQrId,
+          borrowing_status: {
+            [Op.in]: [
+              BorrowingStatus.BORROWED,
+              BorrowingStatus.APPROVED,
+              BorrowingStatus.LATE,
+              BorrowingStatus.PENDING,
+              BorrowingStatus.RESERVED,
+            ],
+          },
+        },
+        transaction: t,
+      });
+
+      for (const borrowing of activeBorrowings) {
+        await borrowing.update(
+          {
+            borrowing_status: BorrowingStatus.RETURNED,
+            returned_at: new Date(),
+          },
+          { transaction: t }
+        );
+      }
+    }
+
     // Sync book stock after status change
     const book = (qr as any).book;
     if (book) {

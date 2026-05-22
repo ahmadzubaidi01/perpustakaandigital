@@ -130,7 +130,9 @@ export default function PengembalianPage() {
             <div className="p-4 rounded-xl bg-muted/40 border border-border">
               <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">Peminjam</span>
               <span className="text-sm font-bold text-foreground mt-1 block">{result.borrower?.full_name || '-'}</span>
-              <span className="text-xs text-muted-foreground">{result.borrower?.class_name || ''}</span>
+              <span className="text-xs text-muted-foreground">
+                {result.borrower?.class_name ? `${result.borrower.class_name} · ` : ''}NISN: {result.borrower?.student_id_number || '-'}
+              </span>
             </div>
             <div className="p-4 rounded-xl bg-muted/40 border border-border">
               <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">Kode Peminjaman</span>

@@ -111,7 +111,7 @@ export default function ProfilePage() {
               <div className="w-full pt-4 border-t border-border text-left space-y-3 text-xs text-muted-foreground">
                 {user.student_id_number && (
                   <div className="flex justify-between items-center bg-muted/50 p-2 rounded-lg">
-                    <span className="font-semibold text-foreground">NIS / NISN:</span>
+                    <span className="font-semibold text-foreground">NISN:</span>
                     <span className="font-mono bg-background px-1.5 py-0.5 rounded border border-border">{user.student_id_number}</span>
                   </div>
                 )}

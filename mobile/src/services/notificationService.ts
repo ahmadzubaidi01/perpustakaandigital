@@ -1,34 +1,33 @@
-import { Platform, Alert } from 'react-native';
+import { Platform } from 'react-native';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 
 // Determine if we are running in the standard Expo Go client app
 export const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
-// Set up background and foreground notification behavior (bypassed on Expo Go SDK 53+)
-if (!isExpoGo) {
-  try {
-    const Notifications = require('expo-notifications');
-    Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldShowBanner: true,
-        shouldShowList: true,
-        shouldPlaySound: true,
-        shouldSetBadge: true,
-      }),
-    });
-  } catch (error) {
-    console.warn('[NotificationService] Failed to set notification handler:', error);
-  }
+// Set up background and foreground notification behavior for all environments (including Expo Go)
+try {
+  const Notifications = require('expo-notifications');
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+    }),
+  });
+} catch (error) {
+  console.warn('[NotificationService] Failed to set notification handler:', error);
 }
 
 export async function registerForPushNotificationsAsync(): Promise<boolean> {
-  if (isExpoGo) {
-    console.log('[NotificationService] Expo Go detected: bypassing native push notification token registration.');
-    return true;
-  }
-
   try {
     const Notifications = require('expo-notifications');
+    
+    if (isExpoGo) {
+      console.log('[NotificationService] Expo Go detected: Registering channel and permissions for local/system notifications.');
+    }
+
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('default', {
         name: 'default',
@@ -49,7 +48,7 @@ export async function registerForPushNotificationsAsync(): Promise<boolean> {
 
     return finalStatus === 'granted';
   } catch (error) {
-    console.warn('[NotificationService] Failed to register push notifications:', error);
+    console.warn('[NotificationService] Failed to register push notifications permissions:', error);
     return false;
   }
 }
@@ -58,11 +57,7 @@ export async function registerForPushNotificationsAsync(): Promise<boolean> {
  * Instantly trigger an OS-level local notification on the device.
  */
 export async function triggerLocalNotification(title: string, body: string, data?: Record<string, any>): Promise<string> {
-  if (isExpoGo) {
-    console.log(`💡 [Expo Go Local Alert] Title: "${title}" | Body: "${body}"`);
-    Alert.alert(title, body);
-    return 'expo-go-bypass';
-  }
+  console.log(`📣 [NotificationService] Triggering system notification: "${title}" | Body: "${body}"`);
 
   try {
     const Notifications = require('expo-notifications');
@@ -80,4 +75,5 @@ export async function triggerLocalNotification(title: string, body: string, data
     return '';
   }
 }
+
 

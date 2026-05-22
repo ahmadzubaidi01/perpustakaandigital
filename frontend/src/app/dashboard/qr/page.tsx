@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { QrCode, Camera, X, CheckCircle, Loader2, Download, List, Scan, Plus, Book } from 'lucide-react';
-import { qrAPI, booksAPI } from '@/lib/api';
+import { QrCode, Camera, X, CheckCircle, Loader2, Download, List, Scan, Plus, Book, Bookmark } from 'lucide-react';
+import { qrAPI, booksAPI, borrowingsAPI } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import { QRCodeSVG } from 'qrcode.react';
 import toast from 'react-hot-toast';
@@ -59,10 +59,14 @@ export default function QRPage() {
 }
 
 function ScannerTab() {
+  const { user } = useAuthStore();
+  const isAdmin = ['super_admin', 'regency_admin', 'district_admin', 'school_admin'].includes(user?.user_role || '');
+
   const [scanning, setScanning] = useState(false);
   const [manualInput, setManualInput] = useState('');
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
 
   const handleScan = async (payload: string) => {
     if (loading) return;
@@ -97,6 +101,32 @@ function ScannerTab() {
       setResult(null);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleStudentBorrow = async (bookQrId: number) => {
+    setActionLoading(true);
+    try {
+      await borrowingsAPI.create({ book_qr_id: bookQrId });
+      toast.success('Pengajuan peminjaman berhasil dikirim! Menunggu persetujuan admin.');
+      setResult(null);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Terjadi kesalahan saat mengajukan peminjaman');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleStudentReserve = async (bookQrId: number) => {
+    setActionLoading(true);
+    try {
+      await borrowingsAPI.reserve({ book_qr_id: bookQrId });
+      toast.success('Reservasi buku berhasil disimpan!');
+      setResult(null);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Terjadi kesalahan saat melakukan reservasi');
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -197,8 +227,23 @@ function ScannerTab() {
                   </div>
                   <div className="p-3.5 rounded-xl bg-muted/40 border border-border">
                     <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">Status Unit</span>
-                    <Badge variant={result.book_qr?.qr_status === 'active' ? 'success' : 'danger'} className="mt-1">
-                      {result.book_qr?.qr_status}
+                    <Badge
+                      variant={
+                        result.book_qr?.qr_status === 'active' ? 'success' :
+                        result.book_qr?.qr_status === 'borrowed' ? 'info' :
+                        result.book_qr?.qr_status === 'maintenance' ? 'warning' :
+                        result.book_qr?.qr_status === 'inactive' ? 'neutral' : 'danger'
+                      }
+                      className="mt-1"
+                    >
+                      {
+                        result.book_qr?.qr_status === 'active' ? 'Tersedia' :
+                        result.book_qr?.qr_status === 'borrowed' ? 'Dipinjam' :
+                        result.book_qr?.qr_status === 'maintenance' ? 'Perawatan' :
+                        result.book_qr?.qr_status === 'damaged' ? 'Rusak' :
+                        result.book_qr?.qr_status === 'lost' ? 'Hilang' :
+                        result.book_qr?.qr_status === 'inactive' ? 'Tidak Tersedia' : result.book_qr?.qr_status
+                      }
                     </Badge>
                   </div>
                 </div>
@@ -213,6 +258,43 @@ function ScannerTab() {
                     <span className="text-sm font-bold text-primary-600 dark:text-primary-400">{result.book.available_stock} Unit</span>
                   </div>
                 </div>
+
+                {!isAdmin && (
+                  <div className="pt-2">
+                    {result.book_qr?.qr_status === 'active' ? (
+                      <div className="flex flex-col sm:flex-row gap-3">
+                        <Button
+                          onClick={() => handleStudentBorrow(result.book_qr?.book_qr_id)}
+                          disabled={actionLoading}
+                          variant="primary"
+                          className="flex-grow"
+                          leftIcon={actionLoading ? <Loader2 size={16} className="animate-spin" /> : <Book size={16} />}
+                        >
+                          Ajukan Peminjaman
+                        </Button>
+                        <Button
+                          onClick={() => handleStudentReserve(result.book_qr?.book_qr_id)}
+                          disabled={actionLoading}
+                          variant="outline"
+                          className="flex-grow text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-900/50 hover:bg-amber-50 dark:hover:bg-amber-950/20"
+                          leftIcon={actionLoading ? <Loader2 size={16} className="animate-spin" /> : <Bookmark size={16} />}
+                        >
+                          Reservasi Buku
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="p-3 rounded-xl border border-red-200/50 dark:border-red-900/30 bg-red-50/50 dark:bg-red-950/20 text-red-800 dark:text-red-300 text-center text-xs font-semibold">
+                        Buku tidak tersedia untuk dipinjam (Status: {
+                          result.book_qr?.qr_status === 'borrowed' ? 'Dipinjam' : 
+                          result.book_qr?.qr_status === 'maintenance' ? 'Perawatan' :
+                          result.book_qr?.qr_status === 'damaged' ? 'Rusak' :
+                          result.book_qr?.qr_status === 'lost' ? 'Hilang' :
+                          result.book_qr?.qr_status === 'inactive' ? 'Tidak Tersedia' : result.book_qr?.qr_status
+                        })
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -344,13 +426,9 @@ function GeneratorTab() {
               placeholder="Contoh: BUKU-XYZ-01"
               value={customSerial}
               onChange={(e) => {
-                const val = e.target.value;
-                setCustomSerial(val);
-                if (val.trim()) {
-                  setQuantity(1);
-                }
+                setCustomSerial(e.target.value);
               }}
-              helperText="Mengisi ini akan membuat 1 QR code dengan nomor seri kustom."
+              helperText="Jika jumlah > 1, nomor seri kustom akan otomatis di-increment (diurutkan)."
             />
             <Input
               label="Jumlah Kopi (QR) yang Dibuat"
@@ -359,8 +437,7 @@ function GeneratorTab() {
               max={50}
               value={quantity}
               onChange={(e) => setQuantity(Number(e.target.value))}
-              disabled={!!customSerial.trim()}
-              helperText={customSerial.trim() ? "Jumlah dikunci pada 1 untuk nomor seri kustom." : "Setiap nomor seri QR code berlaku eksklusif untuk satu salinan fisik."}
+              helperText="Setiap nomor seri QR code berlaku eksklusif untuk satu salinan fisik."
             />
             <Button
               onClick={handleGenerate}
@@ -453,12 +530,23 @@ function QRListTab() {
   }, [fetchQrs]);
 
   const qrStatusBadge = (status: string) => {
-    const map: Record<string, 'success' | 'danger' | 'neutral'> = {
+    const map: Record<string, 'success' | 'info' | 'warning' | 'danger' | 'neutral' | 'primary'> = {
       active: 'success',
+      borrowed: 'info',
+      maintenance: 'warning',
       damaged: 'danger',
-      revoked: 'neutral',
+      lost: 'danger',
+      inactive: 'neutral',
     };
-    return <Badge variant={map[status] || 'neutral'}>{status}</Badge>;
+    const label: Record<string, string> = {
+      active: 'Tersedia',
+      borrowed: 'Dipinjam',
+      maintenance: 'Perawatan',
+      damaged: 'Rusak',
+      lost: 'Hilang',
+      inactive: 'Tidak Tersedia',
+    };
+    return <Badge variant={map[status] || 'neutral'}>{label[status] || status}</Badge>;
   };
 
   const handleDownloadQr = async (qrId: number) => {

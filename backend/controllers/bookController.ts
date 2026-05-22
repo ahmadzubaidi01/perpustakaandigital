@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { Op } from 'sequelize';
-import { Book, BookQr, BookCategory } from '../models';
-import { BookStatus, AuditActionType, TABLE_NAMES, UserRole } from '../config/constants';
+import { Book, BookQr, BookCategory, School } from '../models';
+import { BookStatus, BorrowingStatus, AuditActionType, TABLE_NAMES, UserRole } from '../config/constants';
 import apiResponse from '../utils/apiResponse';
 import { asyncHandler } from '../middleware/errorHandler';
 import { generateBookCode, generateUniqueSlug } from '../utils/helpers';
@@ -35,7 +35,7 @@ const updateBook = asyncHandler(async (req: Request, res: Response): Promise<voi
   if (!isWithinScope(req.user, { school_id: book.school_id, district_id: school?.district_id, regency_id: school?.regency_id })) { apiResponse.forbidden(res, 'Cannot modify book outside your region'); return; }
 
   const oldValues = book.toJSON();
-  const { book_title, author_name, publisher_name, isbn_code, publication_year, category_id, rack_location, total_stock, book_description, book_status } = req.body;
+  const { book_title, author_name, publisher_name, isbn_code, publication_year, category_id, school_id, rack_location, total_stock, book_description, book_status } = req.body;
 
   const updates: any = {};
   if (book_title) { updates.book_title = book_title; updates.book_slug = generateUniqueSlug(book_title); }
@@ -48,6 +48,25 @@ const updateBook = asyncHandler(async (req: Request, res: Response): Promise<voi
   if (book_description !== undefined) updates.book_description = book_description;
   if (book_status) updates.book_status = book_status;
   if (req.file) updates.cover_image_url = `/uploads/${req.file.filename}`;
+
+  // Handle school_id update
+  if (school_id !== undefined) {
+    const isHighAdmin = [UserRole.SUPER_ADMIN, UserRole.REGENCY_ADMIN, UserRole.DISTRICT_ADMIN].includes(req.user!.user_role as UserRole);
+    if (!isHighAdmin && school_id !== book.school_id) {
+      apiResponse.forbidden(res, 'Only regional admins can change the school of a book');
+      return;
+    }
+    const targetSchool = await School.findByPk(school_id);
+    if (!targetSchool) {
+      apiResponse.notFound(res, 'Target school not found');
+      return;
+    }
+    if (!isWithinScope(req.user, { school_id: targetSchool.school_id, district_id: targetSchool.district_id, regency_id: targetSchool.regency_id })) {
+      apiResponse.forbidden(res, 'Cannot assign book to a school outside your region');
+      return;
+    }
+    updates.school_id = school_id;
+  }
 
   // Handle stock changes
   if (total_stock !== undefined) {
@@ -82,7 +101,30 @@ const getBook = asyncHandler(async (req: Request, res: Response): Promise<void> 
     include: [
       { association: 'category', required: false, attributes: ['category_id', 'category_name'] },
       { association: 'school', required: false, attributes: ['school_id', 'school_name'] },
-      { association: 'qr_codes', required: false, attributes: ['book_qr_id', 'qr_uuid', 'qr_serial_number', 'qr_status', 'qr_image_url'] },
+      {
+        association: 'qr_codes',
+        required: false,
+        attributes: ['book_qr_id', 'qr_uuid', 'qr_serial_number', 'qr_status', 'qr_image_url'],
+        include: [
+          {
+            association: 'borrowings',
+            required: false,
+            where: {
+              borrowing_status: {
+                [Op.in]: ['pending', 'approved', 'borrowed', 'late', 'reserved']
+              }
+            },
+            attributes: ['borrowing_id', 'borrowing_status', 'due_date'],
+            include: [
+              {
+                association: 'borrower',
+                required: false,
+                attributes: ['user_id', 'full_name', 'student_id_number']
+              }
+            ]
+          }
+        ]
+      },
       { 
         association: 'reviews', 
         required: false, 

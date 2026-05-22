@@ -75,8 +75,12 @@ export default function BookDetailsScreen({ route, navigation }: any) {
   useEffect(() => {
     if (bookId) {
       fetchBookDetails();
+      const unsubscribe = navigation.addListener('focus', () => {
+        fetchBookDetails();
+      });
+      return unsubscribe;
     }
-  }, [bookId]);
+  }, [bookId, navigation]);
 
   const handleSubmitReview = async () => {
     if (ratingScore < 1 || ratingScore > 5) {
@@ -147,6 +151,29 @@ export default function BookDetailsScreen({ route, navigation }: any) {
     );
   };
 
+  const handleDeleteBook = () => {
+    Alert.alert(
+      'Hapus Buku Dari Katalog',
+      'Apakah Anda yakin ingin menghapus buku ini sepenuhnya dari katalog perpustakaan? Semua data salinan fisik juga akan ikut terhapus.',
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Hapus',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await booksAPI.delete(bookId);
+              Alert.alert('Sukses', 'Katalog buku berhasil dihapus dari perpustakaan.');
+              navigation.goBack();
+            } catch (err: any) {
+              Alert.alert('Gagal Menghapus', err.response?.data?.message || 'Terjadi kesalahan saat menghapus buku.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   if (loading) {
     return (
       <View style={styles.center}>
@@ -169,21 +196,25 @@ export default function BookDetailsScreen({ route, navigation }: any) {
   }
 
   const statusColor = (s: string) => ({
+    active: colors.success500,
     available: colors.success500,
     borrowed: colors.warning500,
     reserved: colors.info500,
     maintenance: colors.surface400,
     damaged: colors.danger500,
     lost: colors.danger500,
+    inactive: colors.surface500,
   }[s] || colors.surface400);
 
   const statusLabel = (s: string) => ({
+    active: 'Tersedia',
     available: 'Tersedia',
     borrowed: 'Dipinjam',
     reserved: 'Dipesan',
     maintenance: 'Perawatan',
     damaged: 'Rusak',
     lost: 'Hilang',
+    inactive: 'Tidak Tersedia',
   }[s] || s);
 
   // Compute average score
@@ -211,7 +242,17 @@ export default function BookDetailsScreen({ route, navigation }: any) {
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>{book.book_title}</Text>
-        <View style={{ width: 24 }} />
+        {isAdmin && (
+          <View style={{ flexDirection: 'row', gap: Spacing.sm, alignItems: 'center' }}>
+            <TouchableOpacity style={{ padding: Spacing.xs }} onPress={() => navigation.navigate('BookCreateEdit', { bookId: book.book_id })}>
+              <Ionicons name="create-outline" size={22} color={colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity style={{ padding: Spacing.xs }} onPress={handleDeleteBook}>
+              <Ionicons name="trash-outline" size={22} color={colors.danger500} />
+            </TouchableOpacity>
+          </View>
+        )}
+        {!isAdmin && <View style={{ width: 24 }} />}
       </View>
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
@@ -266,17 +307,15 @@ export default function BookDetailsScreen({ route, navigation }: any) {
             <View style={styles.detailItem}>
               <Text style={styles.detailLabel}>KATEGORI</Text>
               <Text style={styles.detailValue}>
-                {book.categories && book.categories.length > 0 
-                  ? book.categories.map((c: any) => c.category_name).join(', ')
-                  : book.category_name || '-'}
+                {book.category?.category_name || book.category_name || '-'}
               </Text>
             </View>
-            {book.shelf_location && (
+            {book.rack_location && (
               <>
                 <View style={styles.divider} />
                 <View style={styles.detailItem}>
                   <Text style={styles.detailLabel}>LOKASI RAK</Text>
-                  <Text style={styles.detailValue}>{book.shelf_location}</Text>
+                  <Text style={styles.detailValue}>{book.rack_location}</Text>
                 </View>
               </>
             )}
@@ -500,7 +539,7 @@ export default function BookDetailsScreen({ route, navigation }: any) {
                   PILIH STATUS BARU
                 </Text>
 
-                {['available', 'borrowed', 'maintenance', 'damaged', 'lost'].map((status) => (
+                {['active', 'inactive', 'damaged', 'lost', 'borrowed', 'maintenance'].map((status) => (
                   <TouchableOpacity
                     key={status}
                     style={[

@@ -37,6 +37,9 @@ class Borrowing extends Model<BorrowingAttributes, BorrowingCreationAttributes> 
   public approved_by_user_id!: number | null;
   public readonly created_at!: Date;
   public readonly updated_at!: Date;
+  public book_qr?: any;
+  public borrower?: any;
+  public approved_by?: any;
 
   public static associate(models: any): void {
     Borrowing.belongsTo(models.User, {

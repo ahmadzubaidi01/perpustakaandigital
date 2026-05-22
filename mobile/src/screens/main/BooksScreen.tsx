@@ -121,7 +121,11 @@ export default function BooksScreen({ navigation }: any) {
 
   useEffect(() => {
     fetchBooks(true);
-  }, [search, selectedCategory, selectedStatus]);
+    const unsubscribe = navigation.addListener('focus', () => {
+      fetchBooks(true);
+    });
+    return unsubscribe;
+  }, [navigation, search, selectedCategory, selectedStatus]);
 
   const statusColor = (s: string) => ({
     available: colors.success500,

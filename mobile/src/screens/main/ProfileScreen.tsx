@@ -76,7 +76,7 @@ export default function ProfileScreen({ navigation }: any) {
       <View style={styles.card}>
         <Info icon="mail-outline" label="Email" value={user?.email_address || ''} />
         <Info icon="school-outline" label="Sekolah" value={user?.school?.school_name || '-'} />
-        <Info icon="card-outline" label="NIS" value={user?.student_id_number || '-'} />
+        <Info icon="card-outline" label="NISN" value={user?.student_id_number || '-'} />
         <Info icon="people-outline" label="Kelas" value={user?.class_name || '-'} />
       </View>
 

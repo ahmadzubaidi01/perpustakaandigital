@@ -15,6 +15,19 @@ interface GeneratedQr {
 }
 
 /**
+ * Helper to auto-increment a serial number pattern (e.g. Box-10-005 -> Box-10-006).
+ */
+export const incrementSerialNumber = (serial: string): string => {
+  const match = serial.match(/^(.*?)(\d+)$/);
+  if (!match) return `${serial}-1`;
+  const prefix = match[1];
+  const numStr = match[2];
+  const nextNum = parseInt(numStr, 10) + 1;
+  const nextNumStr = String(nextNum).padStart(numStr.length, '0');
+  return `${prefix}${nextNumStr}`;
+};
+
+/**
  * Generate QR codes for a book's physical copies.
  * Each physical copy gets a UNIQUE QR — no merging of QR identities.
  */
@@ -26,12 +39,24 @@ const generateBookQrCodes = async (
 ): Promise<GeneratedQr[]> => {
   const results: GeneratedQr[] = [];
 
+  // Determine if we should generate custom serials
+  let currentSerial = '';
+  let isCustom = false;
+
   if (customSerial) {
-    const existing = await BookQr.findOne({ where: { qr_serial_number: customSerial }, paranoid: false });
-    if (existing) {
-      const err = new Error('Nomor seri QR kustom sudah terdaftar di sistem');
-      (err as any).statusCode = 400;
-      throw err;
+    currentSerial = customSerial;
+    isCustom = true;
+  } else {
+    // If no custom serial is provided, check if the last generated copy of the book has a custom pattern
+    const lastQr = await BookQr.findOne({
+      where: { book_id: bookId },
+      order: [['book_qr_id', 'DESC']],
+      paranoid: false,
+    });
+    // Standard format matches /^QR-\d{4}-\d{6}-\d{3}-[A-Z0-9]+$/i. If it does not match, it is a custom pattern!
+    if (lastQr && !/^QR-\d{4}-\d{6}-\d{3}-[A-Z0-9]+$/i.test(lastQr.qr_serial_number)) {
+      currentSerial = incrementSerialNumber(lastQr.qr_serial_number);
+      isCustom = true;
     }
   }
 
@@ -48,7 +73,26 @@ const generateBookQrCodes = async (
   for (let i = 0; i < quantity; i++) {
     const copyIndex = existingCount + i + 1;
     const qrUuid = uuidv4();
-    const qrSerialNumber = customSerial || generateQrSerialNumber(schoolId, bookId, copyIndex);
+    
+    let qrSerialNumber = '';
+    if (isCustom) {
+      if (i === 0) {
+        qrSerialNumber = currentSerial;
+      } else {
+        currentSerial = incrementSerialNumber(currentSerial);
+        qrSerialNumber = currentSerial;
+      }
+
+      // Verify that this generated custom serial doesn't already exist in the system
+      const existing = await BookQr.findOne({ where: { qr_serial_number: qrSerialNumber }, paranoid: false });
+      if (existing) {
+        const err = new Error(`Nomor seri QR '${qrSerialNumber}' sudah terdaftar di sistem`);
+        (err as any).statusCode = 400;
+        throw err;
+      }
+    } else {
+      qrSerialNumber = generateQrSerialNumber(schoolId, bookId, copyIndex);
+    }
 
     // QR payload contains encrypted identification data
     const qrPayload = JSON.stringify({

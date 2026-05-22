@@ -104,7 +104,7 @@ export default function BorrowingsPage() {
       label: 'Tanggal Pinjam',
       render: (val) => (
         <span className="text-muted-foreground">
-          {val ? new Date(val).toLocaleDateString('id-ID') : '-'}
+          {val ? new Date(val).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
         </span>
       ),
     },
@@ -113,7 +113,16 @@ export default function BorrowingsPage() {
       label: 'Tenggat',
       render: (val) => (
         <span className="text-muted-foreground">
-          {val ? new Date(val).toLocaleDateString('id-ID') : '-'}
+          {val ? new Date(val).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+        </span>
+      ),
+    },
+    {
+      key: 'returned_at',
+      label: 'Dikembalikan Pada',
+      render: (val) => (
+        <span className="text-muted-foreground">
+          {val ? new Date(val).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
         </span>
       ),
     },
@@ -174,6 +183,8 @@ export default function BorrowingsPage() {
           {[
             { key: '', label: 'Semua' },
             { key: 'pending', label: 'Menunggu' },
+            { key: 'approved', label: 'Disetujui' },
+            { key: 'reserved', label: 'Dipesan' },
             { key: 'borrowed', label: 'Dipinjam' },
             { key: 'late', label: 'Terlambat' },
             { key: 'returned', label: 'Dikembalikan' },

@@ -19,11 +19,15 @@ export default function StudentDashboard() {
   useEffect(() => {
     Promise.all([
       booksAPI.list({ limit: 6, sort_by: 'created_at', sort_order: 'DESC' }),
-      borrowingsAPI.list({ user_id: user?.user_id, borrowing_status: 'borrowed', limit: 5 }),
+      borrowingsAPI.list({ user_id: user?.user_id, limit: 20 }),
     ])
       .then(([booksRes, borrowingsRes]) => {
         setRecentBooks(booksRes.data.data || []);
-        setActiveBorrowings(borrowingsRes.data.data || []);
+        const borrowingsList = borrowingsRes.data.data || [];
+        const activeList = borrowingsList.filter((b: any) =>
+          ['pending', 'approved', 'borrowed', 'reserved', 'late'].includes(b.borrowing_status)
+        ).slice(0, 5);
+        setActiveBorrowings(activeList);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -70,7 +74,7 @@ export default function StudentDashboard() {
       {/* Active Borrowings */}
       <Card hoverable={false} className="p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold text-foreground">Buku Dipinjam</h2>
+          <h2 className="text-lg font-bold text-foreground">Peminjaman & Reservasi Aktif</h2>
           <Link href="/dashboard/borrowings" className="text-xs font-semibold flex items-center gap-1 hover:underline text-primary">
             Lihat Semua <ArrowRight size={14} />
           </Link>
@@ -97,17 +101,29 @@ export default function StudentDashboard() {
                   <p className="text-sm font-semibold text-foreground truncate">{b.book_qr?.book?.book_title || 'Unknown'}</p>
                   <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
                     <Clock size={12} />
-                    Tenggat: {b.due_date ? new Date(b.due_date).toLocaleDateString('id-ID') : '-'}
+                    Tenggat: {b.due_date ? new Date(b.due_date).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
                   </p>
                 </div>
-                <Badge variant={b.borrowing_status === 'late' ? 'danger' : 'success'}>
-                  {b.borrowing_status === 'late' ? 'Terlambat' : 'Aktif'}
+                <Badge
+                  variant={
+                    b.borrowing_status === 'late' ? 'danger' :
+                    b.borrowing_status === 'pending' ? 'warning' :
+                    b.borrowing_status === 'approved' ? 'info' :
+                    b.borrowing_status === 'reserved' ? 'neutral' : 'success'
+                  }
+                >
+                  {
+                    b.borrowing_status === 'late' ? 'Terlambat' :
+                    b.borrowing_status === 'pending' ? 'Menunggu Admin' :
+                    b.borrowing_status === 'approved' ? 'Disetujui' :
+                    b.borrowing_status === 'reserved' ? 'Direservasi' : 'Dipinjam'
+                  }
                 </Badge>
               </div>
             ))}
           </div>
         ) : (
-          <EmptyState icon={BookOpen} title="Belum ada buku yang dipinjam" />
+          <EmptyState icon={BookOpen} title="Belum ada peminjaman atau reservasi aktif" />
         )}
       </Card>
 

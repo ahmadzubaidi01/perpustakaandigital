@@ -77,7 +77,7 @@ export default function UsersPage() {
           <div>
             <p className="text-sm font-bold text-[var(--heading)]">{row.full_name}</p>
             {row.student_id_number && (
-              <p className="text-xs text-[var(--text-muted)] mt-0.5">NIS: {row.student_id_number}</p>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5">NISN: {row.student_id_number}</p>
             )}
           </div>
         </div>
@@ -153,7 +153,7 @@ export default function UsersPage() {
               setSearch(e.target.value);
               setPage(1);
             }}
-            placeholder="Cari nama, email, NIS..."
+            placeholder="Cari nama, email, NISN..."
             leftIcon={<Search size={18} />}
             containerClassName="flex-1"
           />

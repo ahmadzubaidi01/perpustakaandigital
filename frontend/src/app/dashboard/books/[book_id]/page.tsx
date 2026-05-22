@@ -111,8 +111,23 @@ export default function BookDetailPage() {
   };
 
   const qrStatusBadge = (status: string) => {
-    const map: Record<string, string> = { active: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400', inactive: 'bg-[var(--muted)] text-[var(--text-secondary)]', damaged: 'bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400', lost: 'bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400' };
-    return <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold rounded-full ${map[status] || 'bg-[var(--muted)] text-[var(--text-secondary)]'}`}>{status}</span>;
+    const classMap: Record<string, string> = {
+      active: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400',
+      borrowed: 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400',
+      maintenance: 'bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400',
+      damaged: 'bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400',
+      lost: 'bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400',
+      inactive: 'bg-[var(--muted)] text-[var(--text-secondary)]'
+    };
+    const labelMap: Record<string, string> = {
+      active: 'Tersedia',
+      borrowed: 'Dipinjam',
+      maintenance: 'Perawatan',
+      damaged: 'Rusak',
+      lost: 'Hilang',
+      inactive: 'Tidak Tersedia'
+    };
+    return <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold rounded-full ${classMap[status] || 'bg-[var(--muted)] text-[var(--text-secondary)]'}`}>{labelMap[status] || status}</span>;
   };
 
   if (loading) {
@@ -249,11 +264,7 @@ export default function BookDetailPage() {
               placeholder="Contoh: BUKU-XYZ-01"
               value={customSerial}
               onChange={(e) => {
-                const val = e.target.value;
-                setCustomSerial(val);
-                if (val.trim()) {
-                  setGenQty(1);
-                }
+                setCustomSerial(e.target.value);
               }}
               containerClassName="flex-1"
             />
@@ -264,7 +275,6 @@ export default function BookDetailPage() {
               max={50}
               value={genQty}
               onChange={(e) => setGenQty(Number(e.target.value))}
-              disabled={!!customSerial.trim()}
               containerClassName="w-32"
             />
             <Button onClick={handleGenerateQr} isLoading={generating} leftIcon={<QrCode size={16} />}>
@@ -289,20 +299,43 @@ export default function BookDetailPage() {
                   </div>
                   <p className="text-xs font-mono truncate text-[var(--text-secondary)]">{qr.qr_serial_number}</p>
                   
-                  <div className="flex flex-col items-center gap-1.5">
+                  <div className="flex flex-col items-center gap-1.5 w-full">
                     {isAdmin ? (
                       <Select
                         value={qr.qr_status}
                         onChange={(e) => handleStatusChange(qr.book_qr_id, e.target.value)}
-                        className="py-1 px-2 text-xs h-8! pr-8!"
+                        className="py-1 px-2 text-xs h-8! pr-8! w-full"
                       >
-                        <option value="active">Active</option>
-                        <option value="inactive">Inactive</option>
-                        <option value="damaged">Damaged</option>
-                        <option value="lost">Lost</option>
+                        <option value="active">Tersedia (Active)</option>
+                        <option value="borrowed">Dipinjam (Borrowed)</option>
+                        <option value="maintenance">Perawatan (Maintenance)</option>
+                        <option value="damaged">Rusak (Damaged)</option>
+                        <option value="lost">Hilang (Lost)</option>
+                        <option value="inactive">Tidak Tersedia (Inactive)</option>
                       </Select>
                     ) : (
                       qrStatusBadge(qr.qr_status)
+                    )}
+
+                    {qr.qr_status === 'borrowed' || (qr.qr_status === 'active' && qr.borrowings && qr.borrowings.length > 0) ? (
+                      <span 
+                        className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold rounded bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400 border border-blue-100 dark:border-blue-900/30 w-full justify-center truncate" 
+                        title={`Dipinjam: ${qr.borrowings?.[0]?.borrower?.full_name || 'Siswa'}`}
+                      >
+                        Dipinjam: {qr.borrowings?.[0]?.borrower?.full_name || 'Siswa'}
+                      </span>
+                    ) : qr.qr_status === 'active' ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold rounded bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/30 w-full justify-center">
+                        Tersedia
+                      </span>
+                    ) : qr.qr_status === 'maintenance' ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold rounded bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400 border border-amber-100 dark:border-amber-900/30 w-full justify-center">
+                        Perawatan
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold rounded bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400 border border-red-100 dark:border-red-900/30 w-full justify-center">
+                        {qr.qr_status === 'damaged' ? 'Rusak' : qr.qr_status === 'lost' ? 'Hilang' : 'Tidak Tersedia'}
+                      </span>
                     )}
                   </div>
                 </div>

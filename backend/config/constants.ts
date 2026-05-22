@@ -63,6 +63,8 @@ export enum QrStatus {
   INACTIVE = 'inactive',
   DAMAGED = 'damaged',
   LOST = 'lost',
+  BORROWED = 'borrowed',
+  MAINTENANCE = 'maintenance',
 }
 
 // =============================================

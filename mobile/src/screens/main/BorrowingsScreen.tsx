@@ -8,7 +8,18 @@ import { useTheme } from '../../context/ThemeContext';
 import { checkOnlineStatus } from '../../services/syncService';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 
-type FilterType = 'active' | 'history';
+type FilterType = '' | 'pending' | 'approved' | 'reserved' | 'borrowed' | 'late' | 'returned' | 'cancelled';
+
+const STATUS_OPTIONS = [
+  { key: '', label: 'Semua' },
+  { key: 'pending', label: 'Menunggu' },
+  { key: 'approved', label: 'Disetujui' },
+  { key: 'reserved', label: 'Dipesan' },
+  { key: 'borrowed', label: 'Dipinjam' },
+  { key: 'late', label: 'Terlambat' },
+  { key: 'returned', label: 'Dikembalikan' },
+  { key: 'cancelled', label: 'Dibatalkan' },
+] as const;
 
 export default function BorrowingsScreen({ navigation }: any) {
   const { user } = useAuthStore();
@@ -16,8 +27,9 @@ export default function BorrowingsScreen({ navigation }: any) {
   const styles = getStyles(colors);
   const isAdmin = ['super_admin', 'regency_admin', 'district_admin', 'school_admin'].includes(user?.user_role || '');
 
+  const [allBorrowings, setAllBorrowings] = useState<any[]>([]);
   const [borrowings, setBorrowings] = useState<any[]>([]);
-  const [filter, setFilter] = useState<FilterType>('active');
+  const [filter, setFilter] = useState<FilterType>('');
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -35,34 +47,46 @@ export default function BorrowingsScreen({ navigation }: any) {
       }
 
       const params: any = {
-        limit: 50,
+        limit: 150,
         sort_by: 'created_at',
         sort_order: 'DESC',
       };
-
-      if (filter === 'active') {
-        params.borrowing_status = 'borrowed';
-      } else {
-        params.borrowing_status = 'returned';
-      }
 
       if (isAdmin && searchQuery.trim()) {
         params.search = searchQuery.trim();
       }
 
       const res = await borrowingsAPI.list(params);
-      setBorrowings(res.data.data || []);
+      const allData = res.data.data || [];
+      
+      const processed = allData.map((item: any) => {
+        let status = item.borrowing_status;
+        if (status === 'borrowed' && item.due_date && new Date(item.due_date) < new Date()) {
+          status = 'late';
+        }
+        return { ...item, computed_status: status };
+      });
+
+      setAllBorrowings(processed);
     } catch (err: any) {
       setIsOffline(true);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [filter, searchQuery, isAdmin]);
+  }, [searchQuery, isAdmin]);
 
   useEffect(() => {
     fetchBorrowings();
-  }, [filter, searchQuery]);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (filter === '') {
+      setBorrowings(allBorrowings);
+    } else {
+      setBorrowings(allBorrowings.filter((item) => item.computed_status === filter));
+    }
+  }, [allBorrowings, filter]);
 
   const handleRefresh = () => {
     setRefreshing(true);
@@ -87,17 +111,69 @@ export default function BorrowingsScreen({ navigation }: any) {
     ]);
   };
 
+  const handleApprove = async (borrowingId: number) => {
+    Alert.alert('Setujui Peminjaman', 'Yakin ingin menyetujui pengajuan peminjaman buku ini?', [
+      { text: 'Batal', style: 'cancel' },
+      {
+        text: 'Setujui',
+        onPress: async () => {
+          try {
+            const res = await borrowingsAPI.approve(borrowingId);
+            Alert.alert('Berhasil', res.data.message || 'Peminjaman berhasil disetujui!');
+            fetchBorrowings();
+          } catch (err: any) {
+            Alert.alert('Gagal', err.response?.data?.message || 'Gagal menyetujui peminjaman.');
+          }
+        },
+      },
+    ]);
+  };
+
+  const handleReturn = async (borrowingId: number) => {
+    Alert.alert('Kembalikan Buku', 'Yakin ingin memproses pengembalian buku ini?', [
+      { text: 'Batal', style: 'cancel' },
+      {
+        text: 'Kembalikan',
+        onPress: async () => {
+          try {
+            const res = await borrowingsAPI.return(borrowingId);
+            Alert.alert('Berhasil', res.data.message || 'Buku berhasil dikembalikan!');
+            fetchBorrowings();
+          } catch (err: any) {
+            Alert.alert('Gagal', err.response?.data?.message || 'Gagal memproses pengembalian.');
+          }
+        },
+      },
+    ]);
+  };
+
   const getStatusStyle = (status: string) => {
-    if (status === 'late') return { bg: colors.danger500 + '15', text: colors.danger500, label: 'Terlambat' };
-    if (status === 'returned') return { bg: colors.success500 + '15', text: colors.success500, label: 'Dikembalikan' };
-    return { bg: colors.primary500 + '15', text: colors.primary400, label: 'Aktif' };
+    switch (status) {
+      case 'pending':
+        return { bg: colors.warning500 + '15', text: colors.warning500, label: 'Menunggu' };
+      case 'approved':
+        return { bg: colors.info500 + '15', text: colors.info500, label: 'Disetujui' };
+      case 'reserved':
+        return { bg: colors.accent500 + '15', text: colors.accent500, label: 'Dipesan' };
+      case 'borrowed':
+        return { bg: colors.primary500 + '15', text: colors.primary400, label: 'Dipinjam' };
+      case 'late':
+        return { bg: colors.danger500 + '15', text: colors.danger500, label: 'Terlambat' };
+      case 'returned':
+        return { bg: colors.success500 + '15', text: colors.success500, label: 'Dikembalikan' };
+      case 'cancelled':
+        return { bg: colors.surface500 + '15', text: colors.textMuted, label: 'Dibatalkan' };
+      default:
+        return { bg: colors.primary500 + '15', text: colors.primary400, label: 'Aktif' };
+    }
   };
 
   const renderItem = ({ item }: { item: any }) => {
     const bookTitle = item.book_qr?.book?.book_title || 'Buku Tidak Diketahui';
     const authorName = item.book_qr?.book?.author_name || '';
-    const studentName = item.student?.full_name || `NISN: ${item.student?.student_id_number || '-'}`;
-    const dueDate = item.due_date ? new Date(item.due_date).toLocaleDateString('id-ID') : '-';
+    const studentName = item.borrower?.full_name || '-';
+    const studentNisn = item.borrower?.student_id_number || '-';
+    const dueDate = item.due_date ? new Date(item.due_date).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
     
     // Determine status (check if overdue)
     let status = item.borrowing_status;
@@ -113,7 +189,15 @@ export default function BorrowingsScreen({ navigation }: any) {
             <Ionicons name="book" size={20} color={colors.primary400} />
             <View style={{ flex: 1 }}>
               <Text style={styles.bookTitle} numberOfLines={1}>{bookTitle}</Text>
-              <Text style={styles.bookAuthor} numberOfLines={1}>{authorName}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 2 }}>
+                <Text style={styles.bookAuthor} numberOfLines={1}>{authorName}</Text>
+                {item.borrowing_code && (
+                  <>
+                    <Text style={styles.bullet}>•</Text>
+                    <Text style={styles.monoCode}>{item.borrowing_code}</Text>
+                  </>
+                )}
+              </View>
             </View>
           </View>
           <View style={[styles.badge, { backgroundColor: badge.bg }]}>
@@ -127,7 +211,13 @@ export default function BorrowingsScreen({ navigation }: any) {
           {isAdmin && (
             <View style={styles.infoRow}>
               <Ionicons name="person-outline" size={14} color={colors.textMuted} />
-              <Text style={styles.infoText}>Peminjam: <Text style={styles.boldText}>{studentName}</Text></Text>
+              <Text style={styles.infoText}>Peminjam: <Text style={styles.boldText}>{studentName} (NISN: {studentNisn})</Text></Text>
+            </View>
+          )}
+          {item.borrowed_at && (
+            <View style={styles.infoRow}>
+              <Ionicons name="calendar-outline" size={14} color={colors.textMuted} />
+              <Text style={styles.infoText}>Tanggal Pinjam: <Text style={styles.boldText}>{new Date(item.borrowed_at).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</Text></Text>
             </View>
           )}
           <View style={styles.infoRow}>
@@ -137,12 +227,38 @@ export default function BorrowingsScreen({ navigation }: any) {
           {item.returned_at && (
             <View style={styles.infoRow}>
               <Ionicons name="checkmark-done-outline" size={14} color={colors.textMuted} />
-              <Text style={styles.infoText}>Dikembalikan Pada: <Text style={styles.boldText}>{new Date(item.returned_at).toLocaleDateString('id-ID')}</Text></Text>
+              <Text style={styles.infoText}>Dikembalikan Pada: <Text style={styles.boldText}>{new Date(item.returned_at).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</Text></Text>
+            </View>
+          )}
+          {item.late_penalty_amount > 0 && (
+            <View style={styles.infoRow}>
+              <Ionicons name="wallet-outline" size={14} color={colors.danger500} />
+              <Text style={styles.infoText}>Denda: <Text style={[styles.boldText, { color: colors.danger500 }]}>Rp{Number(item.late_penalty_amount).toLocaleString('id-ID')}</Text></Text>
             </View>
           )}
         </View>
 
-        {status === 'borrowed' && (
+        {isAdmin && status === 'pending' && (
+          <TouchableOpacity style={[styles.extendBtn, { backgroundColor: colors.success500 }]} onPress={() => handleApprove(item.borrowing_id)}>
+            <Ionicons name="checkmark-circle-outline" size={16} color={colors.white} />
+            <Text style={styles.extendBtnText}>Setujui Peminjaman</Text>
+          </TouchableOpacity>
+        )}
+
+        {isAdmin && (status === 'borrowed' || status === 'late') && (
+          <View style={{ flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.lg }}>
+            <TouchableOpacity style={[styles.extendBtn, { flex: 1, marginTop: 0, backgroundColor: colors.success500 }]} onPress={() => handleReturn(item.borrowing_id)}>
+              <Ionicons name="arrow-undo-outline" size={16} color={colors.white} />
+              <Text style={styles.extendBtnText}>Kembalikan</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.extendBtn, { flex: 1, marginTop: 0, backgroundColor: colors.primary500 }]} onPress={() => handleExtend(item.borrowing_id)}>
+              <Ionicons name="time-outline" size={16} color={colors.white} />
+              <Text style={styles.extendBtnText}>Perpanjang</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {!isAdmin && status === 'borrowed' && (
           <TouchableOpacity style={styles.extendBtn} onPress={() => handleExtend(item.borrowing_id)}>
             <Ionicons name="time-outline" size={16} color={colors.white} />
             <Text style={styles.extendBtnText}>Perpanjang Pinjaman</Text>
@@ -163,14 +279,37 @@ export default function BorrowingsScreen({ navigation }: any) {
         <View style={{ width: 24 }} />
       </View>
 
-      {/* Tabs Filter */}
-      <View style={styles.tabContainer}>
-        <TouchableOpacity style={[styles.tabButton, filter === 'active' && styles.activeTabButton]} onPress={() => setFilter('active')}>
-          <Text style={[styles.tabText, filter === 'active' && styles.activeTabText]}>Aktif / Dipinjam</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.tabButton, filter === 'history' && styles.activeTabButton]} onPress={() => setFilter('history')}>
-          <Text style={[styles.tabText, filter === 'history' && styles.activeTabText]}>Riwayat Selesai</Text>
-        </TouchableOpacity>
+      {/* Horizontal Status Filter Chips */}
+      <View style={styles.filterWrapper}>
+        <FlatList
+          horizontal
+          data={STATUS_OPTIONS}
+          keyExtractor={(item) => item.key}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterScroll}
+          renderItem={({ item }) => {
+            const isActive = filter === item.key;
+            return (
+              <TouchableOpacity
+                key={item.key}
+                style={[
+                  styles.filterChip,
+                  isActive && styles.activeFilterChip
+                ]}
+                onPress={() => setFilter(item.key)}
+              >
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    isActive && styles.activeFilterChipText
+                  ]}
+                >
+                  {item.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          }}
+        />
       </View>
 
       {/* Admin Student Search */}
@@ -179,7 +318,7 @@ export default function BorrowingsScreen({ navigation }: any) {
           <Ionicons name="search-outline" size={18} color={colors.textMuted} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Cari berdasarkan nama siswa..."
+            placeholder="Cari nama, NISN, atau kode peminjaman..."
             placeholderTextColor={colors.textMuted}
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -232,11 +371,14 @@ const getStyles = (colors: any) =>
     header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.md, height: 56, backgroundColor: colors.surface800, borderBottomWidth: 1, borderBottomColor: colors.surface600 },
     backIcon: { padding: 4 },
     headerTitle: { fontSize: FontSize.lg, fontWeight: '700', color: colors.text },
-    tabContainer: { flexDirection: 'row', backgroundColor: colors.surface800, padding: 6, marginHorizontal: Spacing.lg, marginTop: Spacing.lg, borderRadius: BorderRadius.lg, borderWidth: 1, borderColor: colors.surface600 },
-    tabButton: { flex: 1, paddingVertical: Spacing.md, alignItems: 'center', borderRadius: BorderRadius.md },
-    activeTabButton: { backgroundColor: colors.primary500 },
-    tabText: { fontSize: FontSize.sm, fontWeight: '700', color: colors.textMuted },
-    activeTabText: { color: colors.white },
+    filterWrapper: { marginTop: Spacing.md, marginBottom: Spacing.xs },
+    filterScroll: { paddingHorizontal: Spacing.lg, gap: Spacing.sm, height: 44, alignItems: 'center' },
+    filterChip: { paddingHorizontal: Spacing.md, paddingVertical: 6, borderRadius: BorderRadius.full, borderWidth: 1, borderColor: colors.surface600, backgroundColor: colors.surface800, justifyContent: 'center', alignItems: 'center' },
+    activeFilterChip: { backgroundColor: colors.primary500, borderColor: colors.primary500 },
+    filterChipText: { fontSize: FontSize.xs + 1, fontWeight: '700', color: colors.textMuted },
+    activeFilterChipText: { color: colors.white },
+    bullet: { fontSize: FontSize.xs, color: colors.textMuted, marginHorizontal: 4 },
+    monoCode: { fontSize: FontSize.xs - 1, fontFamily: 'monospace', fontWeight: '700', color: colors.primary400, backgroundColor: colors.surface600, paddingHorizontal: 6, paddingVertical: 2, borderRadius: BorderRadius.sm },
     searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface800, marginHorizontal: Spacing.lg, marginTop: Spacing.md, borderRadius: BorderRadius.lg, paddingHorizontal: Spacing.md, height: 44, borderWidth: 1, borderColor: colors.surface600 },
     searchInput: { flex: 1, color: colors.text, fontSize: FontSize.sm, marginLeft: Spacing.sm },
     offlineBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, backgroundColor: colors.warning500 + '15', marginHorizontal: Spacing.lg, marginTop: Spacing.md, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md, borderRadius: BorderRadius.md, borderWidth: 1, borderColor: colors.warning500 + '30' },

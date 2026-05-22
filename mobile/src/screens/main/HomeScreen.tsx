@@ -88,10 +88,20 @@ export default function HomeScreen({ navigation }: any) {
     try {
       const [booksRes, borrowRes] = await Promise.all([
         booksAPI.list({ limit: 4, sort_by: 'created_at', sort_order: 'DESC' }),
-        borrowingsAPI.list({ borrowing_status: 'borrowed', limit: 3 }),
+        borrowingsAPI.list({ limit: 10 }),
       ]);
       setRecentBooks(booksRes.data.data || []);
-      setActiveBorrowings(borrowRes.data.data || []);
+      
+      const allBorrowings = borrowRes.data.data || [];
+      const activeStates = ['pending', 'approved', 'borrowed', 'reserved', 'late'];
+      const filteredActive = allBorrowings.filter((b: any) => {
+        let status = b.borrowing_status;
+        if (status === 'borrowed' && b.due_date && new Date(b.due_date) < new Date()) {
+          status = 'late';
+        }
+        return activeStates.includes(status);
+      }).slice(0, 3);
+      setActiveBorrowings(filteredActive);
       
       if (isAdmin) {
         await fetchAdminStats();
@@ -111,9 +121,9 @@ export default function HomeScreen({ navigation }: any) {
     { icon: 'book-outline', label: 'Buku', screen: 'BooksTab', color: colors.primary500 },
     { icon: 'qr-code-outline', label: 'Scan QR', screen: 'ScanTab', color: colors.accent500 },
     { icon: 'time-outline', label: 'Pinjaman', screen: 'Borrowings', color: colors.success500 },
-    isAdmin 
-      ? { icon: 'people-outline', label: 'User', screen: 'UserManagement', color: colors.info500 }
-      : { icon: 'card-outline', label: 'Kartu', screen: 'QrGenerator', color: colors.warning500 },
+    ...(isAdmin 
+      ? [{ icon: 'people-outline', label: 'User', screen: 'UserManagement', color: colors.info500 }]
+      : []),
   ];
 
   return (
@@ -172,6 +182,42 @@ export default function HomeScreen({ navigation }: any) {
           {activeBorrowings.length ? activeBorrowings.map((b, idx) => {
             const isLate = b.borrowing_status === 'late' || (b.due_date && new Date(b.due_date) < new Date());
             const bookId = b.book_qr?.book?.book_id;
+            
+            // Map status dynamically
+            let badgeLabel = 'Aktif';
+            let badgeColor = colors.success500;
+            let badgeBg = colors.success500 + '20';
+            
+            if (isLate || b.borrowing_status === 'late') {
+              badgeLabel = 'Terlambat';
+              badgeColor = colors.danger500;
+              badgeBg = colors.danger500 + '20';
+            } else {
+              switch (b.borrowing_status) {
+                case 'pending':
+                  badgeLabel = 'Menunggu';
+                  badgeColor = colors.warning500;
+                  badgeBg = colors.warning500 + '20';
+                  break;
+                case 'approved':
+                  badgeLabel = 'Disetujui';
+                  badgeColor = colors.info500;
+                  badgeBg = colors.info500 + '20';
+                  break;
+                case 'reserved':
+                  badgeLabel = 'Dipesan';
+                  badgeColor = colors.accent500;
+                  badgeBg = colors.accent500 + '20';
+                  break;
+                case 'borrowed':
+                default:
+                  badgeLabel = 'Dipinjam';
+                  badgeColor = colors.primary400;
+                  badgeBg = colors.primary500 + '20';
+                  break;
+              }
+            }
+
             return (
               <TouchableOpacity 
                 key={`borrow-${b.borrowing_id || idx}-${idx}`} 
@@ -182,11 +228,11 @@ export default function HomeScreen({ navigation }: any) {
                 <View style={styles.borrowIcon}><Ionicons name="book" size={20} color={colors.primary400} /></View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.borrowTitle} numberOfLines={1}>{b.book_qr?.book?.book_title || 'Unknown'}</Text>
-                  <Text style={styles.borrowSub}>Tenggat: {b.due_date ? new Date(b.due_date).toLocaleDateString('id-ID') : '-'}</Text>
+                  <Text style={styles.borrowSub}>Tenggat: {b.due_date ? new Date(b.due_date).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}</Text>
                 </View>
-                <View style={[styles.badge, isLate ? styles.badgeDanger : styles.badgeSuccess]}>
-                  <Text style={[styles.badgeText, { color: isLate ? colors.danger500 : colors.success500 }]}>
-                    {isLate ? 'Terlambat' : 'Aktif'}
+                <View style={[styles.badge, { backgroundColor: badgeBg }]}>
+                  <Text style={[styles.badgeText, { color: badgeColor }]}>
+                    {badgeLabel}
                   </Text>
                 </View>
               </TouchableOpacity>

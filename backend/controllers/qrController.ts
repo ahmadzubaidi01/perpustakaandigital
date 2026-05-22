@@ -70,11 +70,6 @@ const generateQrCodes = asyncHandler(async (req: Request, res: Response): Promis
   const book = await Book.findByPk(book_id);
   if (!book) { apiResponse.notFound(res, 'Book not found'); return; }
 
-  if (custom_serial && quantity !== 1) {
-    apiResponse.badRequest(res, 'Gagal: Pembuatan QR Code dengan nomor seri kustom hanya diperbolehkan untuk 1 salinan per transaksi.');
-    return;
-  }
-
   const existingQrCount = await BookQr.count({ where: { book_id: book.book_id } });
   if (existingQrCount + quantity > book.total_stock) {
     apiResponse.badRequest(res, `Gagal: Stok buku hanya ${book.total_stock}, sedangkan total QR yang akan ada adalah ${existingQrCount + quantity}.`);
@@ -88,6 +83,8 @@ const generateQrCodes = asyncHandler(async (req: Request, res: Response): Promis
       const created = await BookQr.create({ book_id: book.book_id, qr_uuid: qr.qr_uuid, qr_serial_number: qr.qr_serial_number, qr_image_url: qr.qr_image_url });
       createdQrs.push(created);
     }
+
+    await syncBookStock(book.book_id);
 
     await createAuditLog(buildAuditFromRequest(req, AuditActionType.GENERATE_QR, TABLE_NAMES.BOOK_QR, book.book_id, null, { quantity, serial_numbers: qrCodes.map(q => q.qr_serial_number) }));
     apiResponse.created(res, `${quantity} QR codes generated`, createdQrs);
@@ -118,6 +115,7 @@ const scanQr = asyncHandler(async (req: Request, res: Response): Promise<void> =
     await bookQr.update({ qr_status: QrStatus.ACTIVE });
     await createAuditLog(buildAuditFromRequest(req, AuditActionType.STATUS_CHANGE, TABLE_NAMES.BOOK_QR, bookQr.book_qr_id, { qr_status: bookQr.qr_status }, { qr_status: QrStatus.ACTIVE }));
     wasReactivated = true;
+    await syncBookStock(bookQr.book_id);
   }
 
   // Update last scan info
@@ -154,11 +152,17 @@ const scanQr = asyncHandler(async (req: Request, res: Response): Promise<void> =
 });
 
 const updateQrStatus = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const qr = await BookQr.findByPk(req.params.book_qr_id as string);
-  if (!qr) { apiResponse.notFound(res, 'Book QR not found'); return; }
-  const oldStatus = qr.qr_status;
-  await qr.update({ qr_status: req.body.qr_status });
-  await createAuditLog(buildAuditFromRequest(req, AuditActionType.STATUS_CHANGE, TABLE_NAMES.BOOK_QR, qr.book_qr_id, { qr_status: oldStatus }, { qr_status: req.body.qr_status }));
+  const bookQrId = parseInt(req.params.book_qr_id as string, 10);
+  const { qr_status, notes } = req.body;
+
+  const validStatuses = Object.values(QrStatus);
+  if (!validStatuses.includes(qr_status)) {
+    apiResponse.badRequest(res, `Invalid status. Must be one of: ${validStatuses.join(', ')}`);
+    return;
+  }
+
+  const { markBookQrStatus } = require('../services/inventoryService');
+  const qr = await markBookQrStatus(bookQrId, qr_status, notes || null, req.user);
   apiResponse.success(res, 'QR status updated', qr);
 });
 
@@ -264,20 +268,7 @@ const deleteQrCode = asyncHandler(async (req: Request, res: Response): Promise<v
     // 4. Soft delete the QR code
     await qr.destroy({ transaction: t });
 
-    // 5. Decrement total_stock of the book by 1
-    const newTotalStock = Math.max(0, book.total_stock - 1);
-    const newAvailableStock = Math.min(book.available_stock, newTotalStock);
-    const newBorrowedStock = Math.max(0, newTotalStock - newAvailableStock);
-    await book.update(
-      {
-        total_stock: newTotalStock,
-        available_stock: newAvailableStock,
-        borrowed_stock: newBorrowedStock,
-      },
-      { transaction: t }
-    );
-
-    // 6. Recalculate and sync book stock
+    // 5. Recalculate and sync book stock
     await syncBookStock(book.book_id, t);
 
     return { qr, book };

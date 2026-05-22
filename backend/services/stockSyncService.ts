@@ -1,6 +1,6 @@
 import { Transaction, Op } from 'sequelize';
 import { Book, BookQr, Borrowing } from '../models';
-import { BorrowingStatus, BookStatus } from '../config/constants';
+import { BorrowingStatus, BookStatus, QrStatus } from '../config/constants';
 import { deleteCache, deleteCachePattern } from '../config/redis';
 import logger from '../utils/logger';
 
@@ -56,23 +56,44 @@ const syncBookStock = async (bookId: number, transaction?: Transaction): Promise
         { transaction }
       );
     } else {
-      // Count actively borrowed copies
-      const borrowedCount = await Borrowing.count({
+      // Count active QR codes (status = ACTIVE)
+      const activeQrCount = await BookQr.count({
         where: {
-          book_qr_id: { [Op.in]: qrIds },
-          borrowing_status: {
-            [Op.in]: [
-              BorrowingStatus.BORROWED,
-              BorrowingStatus.APPROVED,
-              BorrowingStatus.LATE,
-            ],
-          },
+          book_id: bookId,
+          qr_status: QrStatus.ACTIVE,
         },
         transaction,
       });
 
-      const newBorrowedStock = Math.min(borrowedCount, book.total_stock);
-      const newAvailableStock = Math.max(0, book.total_stock - newBorrowedStock);
+      // Find all QR codes for this book to query associated borrowings
+      const bookQrs = await BookQr.findAll({
+        where: { book_id: bookId },
+        attributes: ['book_qr_id'],
+        transaction,
+      });
+      const qrIds = bookQrs.map((qr) => qr.book_qr_id);
+
+      let pendingOrReservedCount = 0;
+      if (qrIds.length > 0) {
+        pendingOrReservedCount = await Borrowing.count({
+          where: {
+            book_qr_id: { [Op.in]: qrIds },
+            borrowing_status: { [Op.in]: [BorrowingStatus.PENDING, BorrowingStatus.RESERVED] },
+          },
+          transaction,
+        });
+      }
+
+      const newAvailableStock = Math.max(0, activeQrCount - pendingOrReservedCount);
+
+      // Count borrowed QR codes (status = BORROWED)
+      const newBorrowedStock = await BookQr.count({
+        where: {
+          book_id: bookId,
+          qr_status: QrStatus.BORROWED,
+        },
+        transaction,
+      });
 
       let updatedStatus = book.book_status;
       if (newAvailableStock === 0 && book.book_status === BookStatus.AVAILABLE) {

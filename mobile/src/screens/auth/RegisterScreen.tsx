@@ -52,7 +52,7 @@ export default function RegisterScreen({ navigation }: any) {
           <View style={styles.form}>
             <Field label="NAMA LENGKAP" keyName="full_name" placeholder="Masukkan nama lengkap" />
             <Field label="EMAIL" keyName="email_address" placeholder="nama@email.com" keyboard="email-address" />
-            <Field label="NIS / NISN (Opsional)" keyName="student_id_number" placeholder="Nomor induk siswa" />
+            <Field label="NISN (Opsional)" keyName="student_id_number" placeholder="Nomor induk siswa" />
             <Field label="KELAS (Opsional)" keyName="class_name" placeholder="Contoh: XII IPA 1" />
             <Field label="PASSWORD" keyName="password" placeholder="Minimal 8 karakter" secure />
             <Field label="KONFIRMASI PASSWORD" keyName="confirm_password" placeholder="Ulangi password" secure />

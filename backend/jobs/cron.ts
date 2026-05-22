@@ -3,6 +3,8 @@ import { Op } from 'sequelize';
 import { Borrowing, BookQr } from '../models';
 import { BorrowingStatus, QrStatus } from '../config/constants';
 import logger from '../utils/logger';
+import { runDailyBorrowingReminders } from '../services/notificationService';
+import { syncBookStock } from '../services/stockSyncService';
 
 export const initCronJobs = () => {
   // Run every midnight at 00:00
@@ -27,6 +29,7 @@ export const initCronJobs = () => {
         }
       });
 
+      const affectedBookIds = new Set<number>();
       let count = 0;
       for (const borrowing of overdueBorrowings) {
         // Update borrowing status to late
@@ -36,13 +39,30 @@ export const initCronJobs = () => {
         const qr = await BookQr.findByPk(borrowing.book_qr_id);
         if (qr) {
           await qr.update({ qr_status: QrStatus.LOST });
+          affectedBookIds.add(qr.book_id);
         }
         count++;
+      }
+
+      // Recalculate and sync stock for all affected books
+      for (const bookId of affectedBookIds) {
+        try {
+          await syncBookStock(bookId);
+        } catch (syncError) {
+          logger.error(`Failed to sync book stock for bookId ${bookId} during cron:`, syncError);
+        }
       }
 
       logger.info(`Auto-lost check completed. Marked ${count} borrowings and QR codes as lost.`);
     } catch (error) {
       logger.error('Error during daily auto-lost cron job:', error);
+    }
+
+    try {
+      logger.info('Running daily book return reminders...');
+      await runDailyBorrowingReminders();
+    } catch (error) {
+      logger.error('Error during daily book return reminders cron job:', error);
     }
   });
 

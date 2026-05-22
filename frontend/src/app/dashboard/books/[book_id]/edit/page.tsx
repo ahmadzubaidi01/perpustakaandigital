@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ArrowLeft, Save, Upload, Book as BookIcon } from 'lucide-react';
-import { booksAPI, categoriesAPI } from '@/lib/api';
+import { booksAPI, categoriesAPI, regionsAPI } from '@/lib/api';
+import { useAuthStore } from '@/lib/store';
 import toast from 'react-hot-toast';
 
 // Reusable UI components
@@ -19,9 +20,14 @@ export default function EditBookPage() {
   const params = useParams();
   const bookId = Number(params.book_id);
 
+  const { user } = useAuthStore();
+  const isHighLevelAdmin = !!user && ['super_admin', 'regency_admin', 'district_admin'].includes(user.user_role);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [categories, setCategories] = useState<any[]>([]);
+  const [schools, setSchools] = useState<any[]>([]);
+  const [loadingSchools, setLoadingSchools] = useState(false);
   const [schoolName, setSchoolName] = useState<string>('');
   const [preview, setPreview] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -35,6 +41,7 @@ export default function EditBookPage() {
     book_description: '',
     rack_location: '',
     book_status: '',
+    school_id: '',
   });
   const [coverFile, setCoverFile] = useState<File | null>(null);
 
@@ -59,9 +66,25 @@ export default function EditBookPage() {
           book_description: book.book_description || '',
           rack_location: book.rack_location || '',
           book_status: book.book_status || '',
+          school_id: book.school_id?.toString() || '',
         });
         if (book.cover_image_url) {
           setPreview(`http://localhost:5000${book.cover_image_url}`);
+        }
+
+        // Fetch schools if regional admin
+        const currentUser = useAuthStore.getState().user;
+        const isHigh = !!currentUser && ['super_admin', 'regency_admin', 'district_admin'].includes(currentUser.user_role);
+        if (isHigh) {
+          setLoadingSchools(true);
+          try {
+            const r = await regionsAPI.listSchools({ limit: 100 });
+            setSchools(r.data.data || []);
+          } catch {
+            toast.error('Gagal memuat daftar sekolah');
+          } finally {
+            setLoadingSchools(false);
+          }
         }
       } catch {
         toast.error('Gagal memuat data buku');
@@ -92,6 +115,11 @@ export default function EditBookPage() {
       return;
     }
 
+    if (isHighLevelAdmin && !form.school_id) {
+      toast.error('Sekolah wajib dipilih');
+      return;
+    }
+
     setSaving(true);
     try {
       const formData = new FormData();
@@ -105,6 +133,7 @@ export default function EditBookPage() {
       formData.append('book_description', form.book_description);
       formData.append('rack_location', form.rack_location);
       if (form.book_status) formData.append('book_status', form.book_status);
+      if (form.school_id) formData.append('school_id', form.school_id);
       if (coverFile) formData.append('cover_image', coverFile);
 
       await booksAPI.update(bookId, formData);
@@ -166,13 +195,28 @@ export default function EditBookPage() {
         <Card hoverable={false} className="p-6 space-y-4">
           <h2 className="text-lg font-bold mb-2 text-foreground">Informasi Buku</h2>
 
-          {schoolName && (
-            <Input
-              label="Sekolah"
-              value={schoolName}
-              disabled
-              className="opacity-60 cursor-not-allowed"
+          {isHighLevelAdmin ? (
+            <Select
+              label="Sekolah *"
+              name="school_id"
+              value={form.school_id}
+              onChange={handleChange}
+              disabled={loadingSchools}
+              required
+              options={[
+                { label: '— Pilih Sekolah —', value: '' },
+                ...schools.map((s: any) => ({ label: s.school_name, value: s.school_id.toString() }))
+              ]}
             />
+          ) : (
+            schoolName && (
+              <Input
+                label="Sekolah"
+                value={schoolName}
+                disabled
+                className="opacity-60 cursor-not-allowed"
+              />
+            )
           )}
 
           <Input

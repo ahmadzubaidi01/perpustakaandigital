@@ -30,8 +30,13 @@ const createBorrowing = asyncHandler(async (req: Request, res: Response): Promis
     const book = (bookQr as any).book;
     if (!book) throw Object.assign(new Error('Associated book not found'), { statusCode: 404 });
 
+    // Scope check: validate student can only borrow from their own school
+    if (!isWithinScope(req.user, book)) {
+      throw Object.assign(new Error('Cannot borrow book outside your school scope'), { statusCode: 403 });
+    }
+
     // Check if QR is already actively borrowed
-    const activeBorrowing = await Borrowing.findOne({ where: { book_qr_id, borrowing_status: { [Op.in]: [BorrowingStatus.PENDING, BorrowingStatus.APPROVED, BorrowingStatus.BORROWED, BorrowingStatus.LATE] } }, transaction: t });
+    const activeBorrowing = await Borrowing.findOne({ where: { book_qr_id, borrowing_status: { [Op.in]: [BorrowingStatus.PENDING, BorrowingStatus.APPROVED, BorrowingStatus.BORROWED, BorrowingStatus.RESERVED, BorrowingStatus.LATE] } }, transaction: t });
     if (activeBorrowing) throw Object.assign(new Error('This physical book is already borrowed'), { statusCode: 409 });
 
     // Check borrowing limits
@@ -64,17 +69,30 @@ const approveBorrowing = asyncHandler(async (req: Request, res: Response): Promi
   const { borrowing_id } = req.params;
 
   const result = await sequelize.transaction(async (t: Transaction) => {
-    const borrowing = await Borrowing.findByPk(borrowing_id as string, { lock: Transaction.LOCK.UPDATE, transaction: t, include: [{ association: 'book_qr', include: [{ association: 'book' }] }] });
+    const borrowing = await Borrowing.findByPk(borrowing_id as string, { lock: Transaction.LOCK.UPDATE, transaction: t, include: [{ association: 'borrower' }, { association: 'book_qr', include: [{ association: 'book' }] }] });
     if (!borrowing) throw Object.assign(new Error('Borrowing not found'), { statusCode: 404 });
     if (borrowing.borrowing_status !== BorrowingStatus.PENDING) throw Object.assign(new Error('Only pending borrowings can be approved'), { statusCode: 400 });
 
     const book = (borrowing as any).book_qr?.book;
+    if (book && !isWithinScope(req.user, book)) {
+      throw Object.assign(new Error('Cannot approve borrowing outside your regional scope'), { statusCode: 403 });
+    }
+
+    const borrower = (borrowing as any).borrower;
+    if (borrower && !isWithinScope(req.user, borrower)) {
+      throw Object.assign(new Error('Cannot approve borrowing for a student outside your regional scope'), { statusCode: 403 });
+    }
+
     const settings = await BorrowingSetting.findOne({ where: { school_id: book?.school_id }, transaction: t });
     const maxDays = settings?.max_borrow_days || env.DEFAULT_MAX_BORROW_DAYS;
     const now = new Date();
     const dueDate = new Date(now.getTime() + maxDays * 24 * 60 * 60 * 1000);
 
     await borrowing.update({ borrowing_status: BorrowingStatus.BORROWED, approved_by_user_id: req.user!.user_id, borrowed_at: now, due_date: dueDate }, { transaction: t });
+    const bookQr = (borrowing as any).book_qr;
+    if (bookQr) {
+      await bookQr.update({ qr_status: QrStatus.BORROWED }, { transaction: t });
+    }
     if (book) await syncBookStock(book.book_id, t);
 
     return borrowing;
@@ -92,25 +110,39 @@ const returnBorrowing = asyncHandler(async (req: Request, res: Response): Promis
   const { borrowing_id } = req.params;
 
   const result = await sequelize.transaction(async (t: Transaction) => {
-    const borrowing = await Borrowing.findByPk(borrowing_id as string, { lock: Transaction.LOCK.UPDATE, transaction: t, include: [{ association: 'book_qr', include: [{ association: 'book' }] }] });
+    const borrowing = await Borrowing.findByPk(borrowing_id as string, { lock: Transaction.LOCK.UPDATE, transaction: t, include: [{ association: 'borrower' }, { association: 'book_qr', include: [{ association: 'book' }] }] });
     if (!borrowing) throw Object.assign(new Error('Borrowing not found'), { statusCode: 404 });
     if (![BorrowingStatus.BORROWED, BorrowingStatus.LATE].includes(borrowing.borrowing_status as any)) throw Object.assign(new Error('Book is not currently borrowed'), { statusCode: 400 });
 
+    const book = (borrowing as any).book_qr?.book;
+    if (book && !isWithinScope(req.user, book)) {
+      throw Object.assign(new Error('Cannot return book outside your regional scope'), { statusCode: 403 });
+    }
+
+    const borrower = (borrowing as any).borrower;
+    if (borrower && !isWithinScope(req.user, borrower)) {
+      throw Object.assign(new Error('Cannot return borrowing for a student outside your regional scope'), { statusCode: 403 });
+    }
+
     const now = new Date();
-    let penaltyAmount = 0;
-    let penaltyStatus: PenaltyStatus | null = null;
+    let penaltyAmount = parseFloat(String(borrowing.late_penalty_amount || 0));
+    let penaltyStatus = borrowing.penalty_status;
 
     if (borrowing.due_date && isPastDue(borrowing.due_date)) {
-      const book = (borrowing as any).book_qr?.book;
       const settings = await BorrowingSetting.findOne({ where: { school_id: book?.school_id }, transaction: t });
       const rate = settings ? parseFloat(String(settings.penalty_rate_per_day)) : env.DEFAULT_PENALTY_RATE_PER_DAY;
-      penaltyAmount = calculateLatePenalty(borrowing.due_date, now, rate);
-      penaltyStatus = PenaltyStatus.UNPAID;
+      const additionalPenalty = calculateLatePenalty(borrowing.due_date, now, rate);
+      penaltyAmount += additionalPenalty;
+      if (penaltyAmount > 0 && penaltyStatus !== PenaltyStatus.PAID) {
+        penaltyStatus = PenaltyStatus.UNPAID;
+      }
     }
 
     await borrowing.update({ borrowing_status: BorrowingStatus.RETURNED, returned_at: now, late_penalty_amount: penaltyAmount, penalty_status: penaltyStatus }, { transaction: t });
-
-    const book = (borrowing as any).book_qr?.book;
+    const bookQr = (borrowing as any).book_qr;
+    if (bookQr) {
+      await bookQr.update({ qr_status: QrStatus.ACTIVE }, { transaction: t });
+    }
     if (book) await syncBookStock(book.book_id, t);
 
     return borrowing;
@@ -128,17 +160,61 @@ const extendBorrowing = asyncHandler(async (req: Request, res: Response): Promis
   const { borrowing_id } = req.params;
 
   const result = await sequelize.transaction(async (t: Transaction) => {
-    const borrowing = await Borrowing.findByPk(borrowing_id as string, { lock: Transaction.LOCK.UPDATE, transaction: t, include: [{ association: 'book_qr', include: [{ association: 'book' }] }] });
+    const borrowing = await Borrowing.findByPk(borrowing_id as string, { lock: Transaction.LOCK.UPDATE, transaction: t, include: [{ association: 'borrower' }, { association: 'book_qr', include: [{ association: 'book' }] }] });
     if (!borrowing) throw Object.assign(new Error('Borrowing not found'), { statusCode: 404 });
-    if (borrowing.borrowing_status !== BorrowingStatus.BORROWED) throw Object.assign(new Error('Only active borrowings can be extended'), { statusCode: 400 });
+    if (![BorrowingStatus.BORROWED, BorrowingStatus.LATE].includes(borrowing.borrowing_status)) {
+      throw Object.assign(new Error('Only borrowed or late books can be extended'), { statusCode: 400 });
+    }
 
     const book = (borrowing as any).book_qr?.book;
+    
+    // Scope check: Student can only extend their own; Admins can extend within their scope.
+    const userRole = req.user!.user_role as UserRole;
+    if (userRole === UserRole.STUDENT_MEMBER) {
+      if (borrowing.user_id !== req.user!.user_id) {
+        throw Object.assign(new Error('You can only extend your own borrowings'), { statusCode: 403 });
+      }
+    } else {
+      if (book && !isWithinScope(req.user, book)) {
+        throw Object.assign(new Error('Cannot extend borrowing outside your regional scope'), { statusCode: 403 });
+      }
+      const borrower = (borrowing as any).borrower;
+      if (borrower && !isWithinScope(req.user, borrower)) {
+        throw Object.assign(new Error('Cannot extend borrowing for a student outside your regional scope'), { statusCode: 403 });
+      }
+    }
+
     const settings = await BorrowingSetting.findOne({ where: { school_id: book?.school_id }, transaction: t });
     if (!settings?.allow_extensions && !env.DEFAULT_ALLOW_EXTENSIONS) throw Object.assign(new Error('Extensions are not allowed'), { statusCode: 400 });
 
     const maxDays = settings?.max_borrow_days || env.DEFAULT_MAX_BORROW_DAYS;
-    const newDueDate = new Date((borrowing.due_date || new Date()).getTime() + maxDays * 24 * 60 * 60 * 1000);
-    await borrowing.update({ due_date: newDueDate }, { transaction: t });
+    
+    // Base extension date: if original due date is in the future, extend from that.
+    // If original due date is already passed (late), extend from now.
+    const baseDate = (borrowing.due_date && borrowing.due_date.getTime() > Date.now()) 
+      ? new Date(borrowing.due_date) 
+      : new Date();
+    const newDueDate = new Date(baseDate.getTime() + maxDays * 24 * 60 * 60 * 1000);
+
+    // Calculate penalty accrued up to today if it was late
+    let penaltyAmount = parseFloat(String(borrowing.late_penalty_amount || 0));
+    let penaltyStatus = borrowing.penalty_status;
+
+    if (borrowing.due_date && isPastDue(borrowing.due_date)) {
+      const rate = settings ? parseFloat(String(settings.penalty_rate_per_day)) : env.DEFAULT_PENALTY_RATE_PER_DAY;
+      const additionalPenalty = calculateLatePenalty(borrowing.due_date, new Date(), rate);
+      penaltyAmount += additionalPenalty;
+      if (penaltyAmount > 0 && penaltyStatus !== PenaltyStatus.PAID) {
+        penaltyStatus = PenaltyStatus.UNPAID;
+      }
+    }
+
+    await borrowing.update({
+      due_date: newDueDate,
+      borrowing_status: BorrowingStatus.BORROWED,
+      late_penalty_amount: penaltyAmount,
+      penalty_status: penaltyStatus
+    }, { transaction: t });
 
     return borrowing;
   });
@@ -159,11 +235,21 @@ const reserveBook = asyncHandler(async (req: Request, res: Response): Promise<vo
     const bookQr = await BookQr.findByPk(book_qr_id, { lock: Transaction.LOCK.UPDATE, transaction: t, include: [{ association: 'book' }] });
     if (!bookQr) throw Object.assign(new Error('Book QR not found'), { statusCode: 404 });
 
+    const book = (bookQr as any).book;
+    if (book && !isWithinScope(req.user, book)) {
+      throw Object.assign(new Error('Cannot reserve book outside your school scope'), { statusCode: 403 });
+    }
+
     const activeBorrowing = await Borrowing.findOne({ where: { book_qr_id, borrowing_status: { [Op.in]: [BorrowingStatus.PENDING, BorrowingStatus.APPROVED, BorrowingStatus.BORROWED, BorrowingStatus.RESERVED, BorrowingStatus.LATE] } }, transaction: t });
     if (activeBorrowing) throw Object.assign(new Error('This book copy is not available'), { statusCode: 409 });
 
     const borrowingCode = generateBorrowingCode();
     const borrowing = await Borrowing.create({ borrowing_code: borrowingCode, user_id: userId, book_qr_id, borrowing_status: BorrowingStatus.RESERVED, late_penalty_amount: 0 }, { transaction: t });
+
+    // Sync stock
+    if (book) {
+      await syncBookStock(book.book_id, t);
+    }
 
     return borrowing;
   });
@@ -180,6 +266,15 @@ const listBorrowings = asyncHandler(async (req: Request, res: Response): Promise
   const pagination = parsePaginationParams(req, 'created_at', ['created_at', 'borrowed_at', 'due_date', 'borrowing_status']);
   const filters = parseFilterParams(req, ['borrowing_status', 'penalty_status', 'user_id']);
   const where: any = { ...filters };
+
+  const { search } = req.query;
+  if (search) {
+    where[Op.or] = [
+      { '$borrower.full_name$': { [Op.like]: `%${search}%` } },
+      { '$borrower.student_id_number$': { [Op.like]: `%${search}%` } },
+      { borrowing_code: { [Op.like]: `%${search}%` } }
+    ];
+  }
 
   // Regional scope: filter through book_qr -> book -> school
   const userRole = req.user!.user_role as UserRole;
@@ -212,7 +307,7 @@ const listBorrowings = asyncHandler(async (req: Request, res: Response): Promise
     bookInclude.required = true;
   }
 
-  const { count, rows } = await Borrowing.findAndCountAll({ where, include: [{ association: 'borrower', attributes: ['user_id', 'full_name', 'email_address'] }, { association: 'book_qr', required: Object.keys(schoolWhere).length > 0, paranoid: false, include: [bookInclude] }, { association: 'approved_by', attributes: ['user_id', 'full_name'] }], order: [[pagination.sortBy, pagination.sortOrder]], limit: pagination.limit, offset: pagination.offset });
+  const { count, rows } = await Borrowing.findAndCountAll({ where, include: [{ association: 'borrower', attributes: ['user_id', 'full_name', 'email_address', 'student_id_number', 'class_name'] }, { association: 'book_qr', required: Object.keys(schoolWhere).length > 0, paranoid: false, include: [bookInclude] }, { association: 'approved_by', attributes: ['user_id', 'full_name'] }], order: [[pagination.sortBy, pagination.sortOrder]], limit: pagination.limit, offset: pagination.offset });
 
   apiResponse.paginated(res, 'Borrowings retrieved', rows, buildPaginationResult(count, pagination));
 });
@@ -223,7 +318,7 @@ const listBorrowings = asyncHandler(async (req: Request, res: Response): Promise
 const getBorrowing = asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const borrowing = await Borrowing.findByPk(req.params.borrowing_id as string, {
     include: [
-      { association: 'borrower', required: false, attributes: ['user_id', 'full_name', 'email_address', 'class_name'] },
+      { association: 'borrower', required: false, attributes: ['user_id', 'full_name', 'email_address', 'class_name', 'student_id_number'] },
       { 
         association: 'book_qr', 
         required: false, 
@@ -287,11 +382,19 @@ const quickBorrow = asyncHandler(async (req: Request, res: Response): Promise<vo
     const book = (bookQr as any).book;
     if (!book) throw Object.assign(new Error('Associated book not found'), { statusCode: 404 });
 
+    // Scope check: Admin can only quick-borrow for books and students in their regional scope
+    if (!isWithinScope(req.user, book)) {
+      throw Object.assign(new Error('Cannot borrow book outside your regional scope'), { statusCode: 403 });
+    }
+    if (!isWithinScope(req.user, student)) {
+      throw Object.assign(new Error('Cannot borrow for a student outside your regional scope'), { statusCode: 403 });
+    }
+
     // Check if QR is already actively borrowed
     const activeBorrowing = await Borrowing.findOne({
       where: {
         book_qr_id: bookQr.book_qr_id,
-        borrowing_status: { [Op.in]: [BorrowingStatus.PENDING, BorrowingStatus.APPROVED, BorrowingStatus.BORROWED, BorrowingStatus.LATE] },
+        borrowing_status: { [Op.in]: [BorrowingStatus.PENDING, BorrowingStatus.APPROVED, BorrowingStatus.BORROWED, BorrowingStatus.RESERVED, BorrowingStatus.LATE] },
       },
       transaction: t,
     });
@@ -328,6 +431,8 @@ const quickBorrow = asyncHandler(async (req: Request, res: Response): Promise<vo
       due_date: dueDate,
       late_penalty_amount: 0,
     }, { transaction: t });
+
+    await bookQr.update({ qr_status: QrStatus.BORROWED }, { transaction: t });
 
     // Sync stock
     await syncBookStock(book.book_id, t);
@@ -383,6 +488,11 @@ const quickReturn = asyncHandler(async (req: Request, res: Response): Promise<vo
     });
     if (!bookQr) throw Object.assign(new Error('Book QR not found'), { statusCode: 404 });
 
+    const book = (bookQr as any).book;
+    if (book && !isWithinScope(req.user, book)) {
+      throw Object.assign(new Error('Cannot return book outside your regional scope'), { statusCode: 403 });
+    }
+
     // Find the active borrowing for this QR
     const borrowing = await Borrowing.findOne({
       where: {
@@ -391,20 +501,27 @@ const quickReturn = asyncHandler(async (req: Request, res: Response): Promise<vo
       },
       lock: Transaction.LOCK.UPDATE,
       transaction: t,
-      include: [{ association: 'borrower', attributes: ['user_id', 'full_name', 'email_address', 'class_name'] }],
+      include: [{ association: 'borrower', attributes: ['user_id', 'full_name', 'email_address', 'class_name', 'student_id_number', 'school_id', 'district_id', 'regency_id'] }],
     });
     if (!borrowing) throw Object.assign(new Error('No active borrowing found for this QR code'), { statusCode: 404 });
 
+    const borrower = (borrowing as any).borrower;
+    if (borrower && !isWithinScope(req.user, borrower)) {
+      throw Object.assign(new Error('Cannot return borrowing for a student outside your regional scope'), { statusCode: 403 });
+    }
+
     const now = new Date();
-    let penaltyAmount = 0;
-    let penaltyStatus: PenaltyStatus | null = null;
+    let penaltyAmount = parseFloat(String(borrowing.late_penalty_amount || 0));
+    let penaltyStatus = borrowing.penalty_status;
 
     if (borrowing.due_date && isPastDue(borrowing.due_date)) {
-      const book = (bookQr as any).book;
       const settings = await BorrowingSetting.findOne({ where: { school_id: book?.school_id }, transaction: t });
       const rate = settings ? parseFloat(String(settings.penalty_rate_per_day)) : env.DEFAULT_PENALTY_RATE_PER_DAY;
-      penaltyAmount = calculateLatePenalty(borrowing.due_date, now, rate);
-      penaltyStatus = PenaltyStatus.UNPAID;
+      const additionalPenalty = calculateLatePenalty(borrowing.due_date, now, rate);
+      penaltyAmount += additionalPenalty;
+      if (penaltyAmount > 0 && penaltyStatus !== PenaltyStatus.PAID) {
+        penaltyStatus = PenaltyStatus.UNPAID;
+      }
     }
 
     await borrowing.update({
@@ -414,7 +531,8 @@ const quickReturn = asyncHandler(async (req: Request, res: Response): Promise<vo
       penalty_status: penaltyStatus,
     }, { transaction: t });
 
-    const book = (bookQr as any).book;
+    await bookQr.update({ qr_status: QrStatus.ACTIVE }, { transaction: t });
+
     if (book) await syncBookStock(book.book_id, t);
 
     return {

@@ -183,7 +183,7 @@ export default function CreateUserPage() {
 
     if (userRole === 'student_member') {
       if (!studentIdNumber) {
-        toast.error('Nomor Induk Siswa (NIS) wajib diisi untuk siswa.');
+        toast.error('Nomor Induk Siswa Nasional (NISN) wajib diisi untuk siswa.');
         return;
       }
       if (!className) {
@@ -415,11 +415,11 @@ export default function CreateUserPage() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Input
-                  label="Nomor Induk Siswa (NIS) *"
+                  label="Nomor Induk Siswa Nasional (NISN) *"
                   type="text"
                   value={studentIdNumber}
                   onChange={(e) => setStudentIdNumber(e.target.value)}
-                  placeholder="Masukkan NIS"
+                  placeholder="Masukkan NISN"
                   required
                 />
 

@@ -152,7 +152,7 @@ export default function PinjamBukuPage() {
             <div className="p-4 rounded-xl bg-muted/40 border border-border">
               <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">Tenggat Kembali</span>
               <span className="text-sm font-bold text-foreground mt-1 block">
-                {result.due_date ? new Date(result.due_date).toLocaleDateString('id-ID', { dateStyle: 'long' }) : '-'}
+                {result.due_date ? new Date(result.due_date).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
               </span>
             </div>
           </div>
@@ -180,7 +180,7 @@ export default function PinjamBukuPage() {
           <Input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Nama siswa, NIS, atau email..."
+            placeholder="Nama siswa, NISN, atau email..."
             leftIcon={searchLoading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
             containerClassName="mb-4"
           />
@@ -194,7 +194,7 @@ export default function PinjamBukuPage() {
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-bold text-foreground truncate">{selectedStudent.full_name}</p>
                 <p className="text-xs text-muted-foreground">
-                  {selectedStudent.class_name || 'Tanpa kelas'} · NIS: {selectedStudent.student_id_number || '-'}
+                  {selectedStudent.class_name || 'Tanpa kelas'} · NISN: {selectedStudent.student_id_number || '-'}
                 </p>
                 <div className="flex items-center gap-2 mt-1">
                   <Badge variant={selectedStudent.active_borrowing_count > 0 ? 'warning' : 'success'}>
@@ -222,7 +222,7 @@ export default function PinjamBukuPage() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-foreground truncate">{s.full_name}</p>
-                        <p className="text-xs text-muted-foreground truncate">{s.class_name || 'Tanpa kelas'} · {s.student_id_number || 'Tanpa NIS'}</p>
+                        <p className="text-xs text-muted-foreground truncate">{s.class_name || 'Tanpa kelas'} · {s.student_id_number || 'Tanpa NISN'}</p>
                       </div>
                       <Badge variant={s.active_borrowing_count > 0 ? 'warning' : 'success'}>
                         {s.active_borrowing_count} pinjam
