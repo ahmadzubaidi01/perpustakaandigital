@@ -196,9 +196,19 @@ const listBorrowings = asyncHandler(async (req: Request, res: Response): Promise
     where.user_id = req.user!.user_id;
   }
 
-  const bookInclude: any = { association: 'book', attributes: ['book_id', 'book_title', 'book_code', 'school_id'], paranoid: false };
+  const schoolInclude: any = { association: 'school', attributes: ['school_id', 'school_name', 'district_id', 'regency_id'] };
   if (Object.keys(schoolWhere).length > 0) {
-    bookInclude.where = schoolWhere;
+    schoolInclude.where = schoolWhere;
+    schoolInclude.required = true;
+  }
+
+  const bookInclude: any = {
+    association: 'book',
+    attributes: ['book_id', 'book_title', 'book_code', 'school_id'],
+    paranoid: false,
+    include: [schoolInclude]
+  };
+  if (Object.keys(schoolWhere).length > 0) {
     bookInclude.required = true;
   }
 

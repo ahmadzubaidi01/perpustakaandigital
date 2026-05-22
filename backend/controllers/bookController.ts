@@ -23,14 +23,6 @@ const createBook = asyncHandler(async (req: Request, res: Response): Promise<voi
 
   const book = await Book.create({ book_code: bookCode, book_title, book_slug: bookSlug, book_description: book_description || null, author_name, publisher_name: publisher_name || null, isbn_code: isbn_code || null, publication_year: publication_year || null, category_id: category_id || null, school_id: targetSchoolId, rack_location: rack_location || null, total_stock: total_stock || 0, available_stock: total_stock || 0, borrowed_stock: 0, cover_image_url: coverImageUrl, book_status: BookStatus.AVAILABLE });
 
-  // Auto-generate QR codes for each physical copy
-  if (total_stock > 0) {
-    const qrCodes = await generateBookQrCodes(book.book_id, targetSchoolId, total_stock);
-    for (const qr of qrCodes) {
-      await BookQr.create({ book_id: book.book_id, qr_uuid: qr.qr_uuid, qr_serial_number: qr.qr_serial_number, qr_image_url: qr.qr_image_url });
-    }
-  }
-
   await deleteCachePattern('books:*');
   await createAuditLog(buildAuditFromRequest(req, AuditActionType.CREATE, TABLE_NAMES.BOOKS, book.book_id, null, { book_code: bookCode, book_title, total_stock }));
   apiResponse.created(res, 'Book created successfully', book);
@@ -57,15 +49,8 @@ const updateBook = asyncHandler(async (req: Request, res: Response): Promise<voi
   if (book_status) updates.book_status = book_status;
   if (req.file) updates.cover_image_url = `/uploads/${req.file.filename}`;
 
-  // Handle stock changes — generate additional QR codes if stock increases
-  if (total_stock !== undefined && total_stock > book.total_stock) {
-    const additionalCopies = total_stock - book.total_stock;
-    const qrCodes = await generateBookQrCodes(book.book_id, book.school_id, additionalCopies);
-    for (const qr of qrCodes) {
-      await BookQr.create({ book_id: book.book_id, qr_uuid: qr.qr_uuid, qr_serial_number: qr.qr_serial_number, qr_image_url: qr.qr_image_url });
-    }
-    updates.total_stock = total_stock;
-  } else if (total_stock !== undefined) {
+  // Handle stock changes
+  if (total_stock !== undefined) {
     updates.total_stock = total_stock;
   }
 

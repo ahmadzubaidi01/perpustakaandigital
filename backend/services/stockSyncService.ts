@@ -1,6 +1,6 @@
 import { Transaction, Op } from 'sequelize';
 import { Book, BookQr, Borrowing } from '../models';
-import { BorrowingStatus } from '../config/constants';
+import { BorrowingStatus, BookStatus } from '../config/constants';
 import { deleteCache, deleteCachePattern } from '../config/redis';
 import logger from '../utils/logger';
 
@@ -40,10 +40,18 @@ const syncBookStock = async (bookId: number, transaction?: Transaction): Promise
 
     if (qrIds.length === 0) {
       // No QR codes — all stock is available
+      let updatedStatus = book.book_status;
+      if (book.total_stock > 0 && book.book_status === BookStatus.BORROWED) {
+        updatedStatus = BookStatus.AVAILABLE;
+      } else if (book.total_stock === 0 && book.book_status === BookStatus.AVAILABLE) {
+        updatedStatus = BookStatus.BORROWED;
+      }
+
       await book.update(
         {
           borrowed_stock: 0,
           available_stock: book.total_stock,
+          book_status: updatedStatus,
         },
         { transaction }
       );
@@ -66,10 +74,18 @@ const syncBookStock = async (bookId: number, transaction?: Transaction): Promise
       const newBorrowedStock = Math.min(borrowedCount, book.total_stock);
       const newAvailableStock = Math.max(0, book.total_stock - newBorrowedStock);
 
+      let updatedStatus = book.book_status;
+      if (newAvailableStock === 0 && book.book_status === BookStatus.AVAILABLE) {
+        updatedStatus = BookStatus.BORROWED;
+      } else if (newAvailableStock > 0 && book.book_status === BookStatus.BORROWED) {
+        updatedStatus = BookStatus.AVAILABLE;
+      }
+
       await book.update(
         {
           borrowed_stock: newBorrowedStock,
           available_stock: newAvailableStock,
+          book_status: updatedStatus,
         },
         { transaction }
       );

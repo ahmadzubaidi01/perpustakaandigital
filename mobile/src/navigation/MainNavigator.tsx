@@ -24,6 +24,7 @@ import { FontSize } from '../constants/theme';
 import { useTheme } from '../context/ThemeContext';
 import { useAuthStore } from '../store/authStore';
 import { useNotificationStore } from '../store/notificationStore';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -33,6 +34,7 @@ function TabNavigator() {
   const { user } = useAuthStore();
   const isAdmin = user?.user_role && user.user_role !== 'student_member';
   const { chatUnreadCount } = useNotificationStore();
+  const insets = useSafeAreaInsets();
 
   return (
     <Tab.Navigator
@@ -40,7 +42,7 @@ function TabNavigator() {
         headerStyle: { backgroundColor: colors.surface800, elevation: 0, shadowOpacity: 0, borderBottomWidth: 1, borderBottomColor: colors.surface600 },
         headerTintColor: colors.text,
         headerTitleStyle: { fontWeight: '700', fontSize: FontSize.lg },
-        tabBarStyle: { backgroundColor: colors.surface800, borderTopWidth: 1, borderTopColor: colors.surface600, height: 60, paddingBottom: 8, paddingTop: 4 },
+        tabBarStyle: { backgroundColor: colors.surface800, borderTopWidth: 1, borderTopColor: colors.surface600, height: 60 + insets.bottom, paddingBottom: insets.bottom > 0 ? insets.bottom : 8, paddingTop: 4 },
         tabBarActiveTintColor: colors.primary400,
         tabBarInactiveTintColor: colors.surface400,
         tabBarLabelStyle: { fontSize: FontSize.xs, fontWeight: '600' },

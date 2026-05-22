@@ -127,14 +127,22 @@ export default function ScanScreen() {
     setScanning(false);
 
     try {
-      // 1. Get GPS Location if available
+      // 1. Get GPS Location if available (optimized & fast lookup)
       let latitude: number | undefined, longitude: number | undefined;
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status === 'granted') {
-          const loc = await Location.getCurrentPositionAsync({});
-          latitude = loc.coords.latitude;
-          longitude = loc.coords.longitude;
+          const lastLoc = await Location.getLastKnownPositionAsync({});
+          if (lastLoc) {
+            latitude = lastLoc.coords.latitude;
+            longitude = lastLoc.coords.longitude;
+          } else {
+            const loc = await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.Low,
+            });
+            latitude = loc.coords.latitude;
+            longitude = loc.coords.longitude;
+          }
         }
       } catch { }
 

@@ -23,9 +23,18 @@ const listBookQrs = asyncHandler(async (req: Request, res: Response): Promise<vo
   else if (regionFilter.district_id) bookWhere.district_id = regionFilter.district_id;
   else if (regionFilter.regency_id) bookWhere.regency_id = regionFilter.regency_id;
 
-  const bookInclude: any = { association: 'book', attributes: ['book_id', 'book_title', 'book_code', 'school_id'] };
+  const schoolInclude: any = { association: 'school', attributes: ['school_id', 'school_name', 'district_id', 'regency_id'] };
   if (Object.keys(bookWhere).length > 0) {
-    bookInclude.where = bookWhere;
+    schoolInclude.where = bookWhere;
+    schoolInclude.required = true;
+  }
+
+  const bookInclude: any = {
+    association: 'book',
+    attributes: ['book_id', 'book_title', 'book_code', 'school_id'],
+    include: [schoolInclude]
+  };
+  if (Object.keys(bookWhere).length > 0) {
     bookInclude.required = true;
   }
 
@@ -175,9 +184,18 @@ const getScanLogs = asyncHandler(async (req: Request, res: Response): Promise<vo
   else if (regionFilter.district_id) bookWhere.district_id = regionFilter.district_id;
   else if (regionFilter.regency_id) bookWhere.regency_id = regionFilter.regency_id;
 
-  const bookInclude: any = { association: 'book', attributes: ['book_id', 'book_title'] };
+  const schoolInclude: any = { association: 'school', attributes: ['school_id', 'school_name', 'district_id', 'regency_id'] };
   if (Object.keys(bookWhere).length > 0) {
-    bookInclude.where = bookWhere;
+    schoolInclude.where = bookWhere;
+    schoolInclude.required = true;
+  }
+
+  const bookInclude: any = {
+    association: 'book',
+    attributes: ['book_id', 'book_title'],
+    include: [schoolInclude]
+  };
+  if (Object.keys(bookWhere).length > 0) {
     bookInclude.required = true;
   }
 

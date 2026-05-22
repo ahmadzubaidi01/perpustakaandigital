@@ -5,6 +5,7 @@ import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 import { authAPI } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { useTheme } from '../../context/ThemeContext';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function LoginScreen({ navigation }: any) {
   const { login } = useAuthStore();
@@ -33,76 +34,79 @@ export default function LoginScreen({ navigation }: any) {
   };
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        {/* Logo */}
-        <View style={styles.logoContainer}>
-          <View style={styles.logoBox}>
-            <Ionicons name="book" size={36} color={colors.white} />
-          </View>
-          <Text style={styles.title}>Perpustakaan Digital</Text>
-          <Text style={styles.subtitle}>Masuk ke akun Anda</Text>
-        </View>
-
-        {/* Form */}
-        <View style={styles.form}>
-          {/* Email */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>EMAIL</Text>
-            <View style={styles.inputContainer}>
-              <Ionicons name="mail-outline" size={20} color={colors.surface400} style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder="nama@email.com"
-                placeholderTextColor={colors.surface400}
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
+    <SafeAreaView style={styles.safeArea}>
+      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+          {/* Logo */}
+          <View style={styles.logoContainer}>
+            <View style={styles.logoBox}>
+              <Ionicons name="book" size={36} color={colors.white} />
             </View>
+            <Text style={styles.title}>Perpustakaan Digital</Text>
+            <Text style={styles.subtitle}>Masuk ke akun Anda</Text>
           </View>
 
-          {/* Password */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>PASSWORD</Text>
-            <View style={styles.inputContainer}>
-              <Ionicons name="lock-closed-outline" size={20} color={colors.surface400} style={styles.inputIcon} />
-              <TextInput
-                style={[styles.input, { flex: 1 }]}
-                placeholder="Masukkan password"
-                placeholderTextColor={colors.surface400}
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!showPassword}
-              />
-              <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeButton}>
-                <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color={colors.surface400} />
+          {/* Form */}
+          <View style={styles.form}>
+            {/* Email */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>EMAIL</Text>
+              <View style={styles.inputContainer}>
+                <Ionicons name="mail-outline" size={20} color={colors.surface400} style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="nama@email.com"
+                  placeholderTextColor={colors.surface400}
+                  value={email}
+                  onChangeText={setEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+            </View>
+
+            {/* Password */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>PASSWORD</Text>
+              <View style={styles.inputContainer}>
+                <Ionicons name="lock-closed-outline" size={20} color={colors.surface400} style={styles.inputIcon} />
+                <TextInput
+                  style={[styles.input, { flex: 1 }]}
+                  placeholder="Masukkan password"
+                  placeholderTextColor={colors.surface400}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                />
+                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeButton}>
+                  <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color={colors.surface400} />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Login Button */}
+            <TouchableOpacity style={styles.button} onPress={handleLogin} disabled={loading} activeOpacity={0.8}>
+              {loading ? <ActivityIndicator color={colors.white} /> : <Text style={styles.buttonText}>Masuk</Text>}
+            </TouchableOpacity>
+
+            {/* Register Link */}
+            <View style={styles.linkRow}>
+              <Text style={styles.linkText}>Belum punya akun? </Text>
+              <TouchableOpacity onPress={() => navigation.navigate('Register')}>
+                <Text style={styles.link}>Daftar</Text>
               </TouchableOpacity>
             </View>
           </View>
-
-          {/* Login Button */}
-          <TouchableOpacity style={styles.button} onPress={handleLogin} disabled={loading} activeOpacity={0.8}>
-            {loading ? <ActivityIndicator color={colors.white} /> : <Text style={styles.buttonText}>Masuk</Text>}
-          </TouchableOpacity>
-
-          {/* Register Link */}
-          <View style={styles.linkRow}>
-            <Text style={styles.linkText}>Belum punya akun? </Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Register')}>
-              <Text style={styles.link}>Daftar</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const getStyles = (colors: any) =>
   StyleSheet.create({
+    safeArea: { flex: 1, backgroundColor: colors.surface900 },
     container: { flex: 1, backgroundColor: colors.surface900 },
     scroll: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: Spacing.xxl, paddingVertical: Spacing.xxxl },
     logoContainer: { alignItems: 'center', marginBottom: Spacing.xxxl },

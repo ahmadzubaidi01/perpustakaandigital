@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
@@ -10,8 +10,20 @@ import { useNotificationStore } from '../../store/notificationStore';
 export default function ManagementScreen({ navigation }: any) {
   const { colors } = useTheme();
   const { user } = useAuthStore();
-  const { chatUnreadCount } = useNotificationStore();
+  const { chatUnreadCount, fetchUnreadCount } = useNotificationStore();
+  const [refreshing, setRefreshing] = useState(false);
   const styles = getStyles(colors);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await fetchUnreadCount();
+    } catch (err) {
+      console.warn('[ManagementScreen] Failed to refresh:', err);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const menuItems = [
     {
@@ -71,7 +83,17 @@ export default function ManagementScreen({ navigation }: any) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <ScrollView 
+        contentContainerStyle={styles.scroll}
+        refreshControl={
+          <RefreshControl 
+            refreshing={refreshing} 
+            onRefresh={onRefresh} 
+            tintColor={colors.primary400} 
+            colors={[colors.primary500]}
+          />
+        }
+      >
         <Text style={styles.subtitle}>Kelola resource, konfigurasi, dan layanan perpustakaan digital.</Text>
         
         <View style={styles.grid}>

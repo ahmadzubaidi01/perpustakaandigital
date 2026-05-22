@@ -1,25 +1,32 @@
-import { Platform } from 'react-native';
+import { Platform, Alert } from 'react-native';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 
 // Determine if we are running in the standard Expo Go client app
 export const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
-// Set up background and foreground notification behavior
-try {
-  const Notifications = require('expo-notifications');
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowAlert: true,
-      shouldPlaySound: true,
-      shouldSetBadge: true,
-    }),
-  });
-} catch (error) {
-  console.warn('[NotificationService] Failed to set notification handler:', error);
+// Set up background and foreground notification behavior (bypassed on Expo Go SDK 53+)
+if (!isExpoGo) {
+  try {
+    const Notifications = require('expo-notifications');
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+      }),
+    });
+  } catch (error) {
+    console.warn('[NotificationService] Failed to set notification handler:', error);
+  }
 }
 
-
 export async function registerForPushNotificationsAsync(): Promise<boolean> {
+  if (isExpoGo) {
+    console.log('[NotificationService] Expo Go detected: bypassing native push notification token registration.');
+    return true;
+  }
+
   try {
     const Notifications = require('expo-notifications');
     if (Platform.OS === 'android') {
@@ -53,7 +60,10 @@ export async function registerForPushNotificationsAsync(): Promise<boolean> {
 export async function triggerLocalNotification(title: string, body: string, data?: Record<string, any>): Promise<string> {
   if (isExpoGo) {
     console.log(`💡 [Expo Go Local Alert] Title: "${title}" | Body: "${body}"`);
+    Alert.alert(title, body);
+    return 'expo-go-bypass';
   }
+
   try {
     const Notifications = require('expo-notifications');
     return await Notifications.scheduleNotificationAsync({

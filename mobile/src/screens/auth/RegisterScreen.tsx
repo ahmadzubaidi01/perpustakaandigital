@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 import { authAPI } from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function RegisterScreen({ navigation }: any) {
   const { colors } = useTheme();
@@ -39,38 +40,41 @@ export default function RegisterScreen({ navigation }: any) {
   );
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        <View style={styles.logoContainer}>
-          <View style={styles.logoBox}><Ionicons name="person-add" size={32} color={colors.white} /></View>
-          <Text style={styles.title}>Daftar Akun</Text>
-          <Text style={styles.subtitle}>Buat akun untuk meminjam buku</Text>
-        </View>
-
-        <View style={styles.form}>
-          <Field label="NAMA LENGKAP" keyName="full_name" placeholder="Masukkan nama lengkap" />
-          <Field label="EMAIL" keyName="email_address" placeholder="nama@email.com" keyboard="email-address" />
-          <Field label="NIS / NISN (Opsional)" keyName="student_id_number" placeholder="Nomor induk siswa" />
-          <Field label="KELAS (Opsional)" keyName="class_name" placeholder="Contoh: XII IPA 1" />
-          <Field label="PASSWORD" keyName="password" placeholder="Minimal 8 karakter" secure />
-          <Field label="KONFIRMASI PASSWORD" keyName="confirm_password" placeholder="Ulangi password" secure />
-
-          <TouchableOpacity style={styles.button} onPress={handleRegister} disabled={loading} activeOpacity={0.8}>
-            {loading ? <ActivityIndicator color={colors.white} /> : <Text style={styles.buttonText}>Daftar</Text>}
-          </TouchableOpacity>
-
-          <View style={styles.linkRow}>
-            <Text style={styles.linkText}>Sudah punya akun? </Text>
-            <TouchableOpacity onPress={() => navigation.goBack()}><Text style={styles.link}>Masuk</Text></TouchableOpacity>
+    <SafeAreaView style={styles.safeArea}>
+      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+          <View style={styles.logoContainer}>
+            <View style={styles.logoBox}><Ionicons name="person-add" size={32} color={colors.white} /></View>
+            <Text style={styles.title}>Daftar Akun</Text>
+            <Text style={styles.subtitle}>Buat akun untuk meminjam buku</Text>
           </View>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+
+          <View style={styles.form}>
+            <Field label="NAMA LENGKAP" keyName="full_name" placeholder="Masukkan nama lengkap" />
+            <Field label="EMAIL" keyName="email_address" placeholder="nama@email.com" keyboard="email-address" />
+            <Field label="NIS / NISN (Opsional)" keyName="student_id_number" placeholder="Nomor induk siswa" />
+            <Field label="KELAS (Opsional)" keyName="class_name" placeholder="Contoh: XII IPA 1" />
+            <Field label="PASSWORD" keyName="password" placeholder="Minimal 8 karakter" secure />
+            <Field label="KONFIRMASI PASSWORD" keyName="confirm_password" placeholder="Ulangi password" secure />
+
+            <TouchableOpacity style={styles.button} onPress={handleRegister} disabled={loading} activeOpacity={0.8}>
+              {loading ? <ActivityIndicator color={colors.white} /> : <Text style={styles.buttonText}>Daftar</Text>}
+            </TouchableOpacity>
+
+            <View style={styles.linkRow}>
+              <Text style={styles.linkText}>Sudah punya akun? </Text>
+              <TouchableOpacity onPress={() => navigation.goBack()}><Text style={styles.link}>Masuk</Text></TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const getStyles = (colors: any) =>
   StyleSheet.create({
+    safeArea: { flex: 1, backgroundColor: colors.surface900 },
     container: { flex: 1, backgroundColor: colors.surface900 },
     scroll: { flexGrow: 1, paddingHorizontal: Spacing.xxl, paddingVertical: Spacing.xxxl },
     logoContainer: { alignItems: 'center', marginBottom: Spacing.xxl },
