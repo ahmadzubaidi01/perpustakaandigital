@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Book, History, Star, BookOpen, Clock, ArrowRight } from 'lucide-react';
-import { booksAPI, borrowingsAPI } from '@/lib/api';
+import { booksAPI, borrowingsAPI, getMediaUrl } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import { Card } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -25,7 +25,7 @@ export default function StudentDashboard() {
         setRecentBooks(booksRes.data.data || []);
         const borrowingsList = borrowingsRes.data.data || [];
         const activeList = borrowingsList.filter((b: any) =>
-          ['pending', 'approved', 'borrowed', 'reserved', 'late'].includes(b.borrowing_status)
+          ['pending', 'approved', 'borrowed', 'late'].includes(b.borrowing_status)
         ).slice(0, 5);
         setActiveBorrowings(activeList);
       })
@@ -74,7 +74,7 @@ export default function StudentDashboard() {
       {/* Active Borrowings */}
       <Card hoverable={false} className="p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold text-foreground">Peminjaman & Reservasi Aktif</h2>
+          <h2 className="text-lg font-bold text-foreground">Peminjaman Aktif</h2>
           <Link href="/dashboard/borrowings" className="text-xs font-semibold flex items-center gap-1 hover:underline text-primary">
             Lihat Semua <ArrowRight size={14} />
           </Link>
@@ -108,22 +108,20 @@ export default function StudentDashboard() {
                   variant={
                     b.borrowing_status === 'late' ? 'danger' :
                     b.borrowing_status === 'pending' ? 'warning' :
-                    b.borrowing_status === 'approved' ? 'info' :
-                    b.borrowing_status === 'reserved' ? 'neutral' : 'success'
+                    b.borrowing_status === 'approved' ? 'info' : 'success'
                   }
                 >
                   {
                     b.borrowing_status === 'late' ? 'Terlambat' :
                     b.borrowing_status === 'pending' ? 'Menunggu Admin' :
-                    b.borrowing_status === 'approved' ? 'Disetujui' :
-                    b.borrowing_status === 'reserved' ? 'Direservasi' : 'Dipinjam'
+                    b.borrowing_status === 'approved' ? 'Disetujui' : 'Dipinjam'
                   }
                 </Badge>
               </div>
             ))}
           </div>
         ) : (
-          <EmptyState icon={BookOpen} title="Belum ada peminjaman atau reservasi aktif" />
+          <EmptyState icon={BookOpen} title="Belum ada peminjaman aktif" />
         )}
       </Card>
 
@@ -150,7 +148,7 @@ export default function StudentDashboard() {
                 >
                   {book.cover_image_url ? (
                     <img
-                      src={book.cover_image_url}
+                      src={getMediaUrl(book.cover_image_url)}
                       alt={book.book_title}
                       className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                     />

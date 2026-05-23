@@ -30,6 +30,32 @@ export default function ChatRoomScreen({ route, navigation }: any) {
     ? conversation.participant_2
     : conversation.participant_1;
 
+  const getRoleLabel = (u: any) => {
+    if (!u) return '';
+    const role = u.user_role;
+    const schoolName = u.school?.school_name;
+    const regencyName = u.regency?.regency_name;
+    const districtName = u.district?.district_name;
+
+    if (role === 'school_admin' && schoolName) {
+      return `Admin ${schoolName}`;
+    }
+    if (role === 'regency_admin' && regencyName) {
+      return `Admin ${regencyName}`;
+    }
+    if (role === 'district_admin' && districtName) {
+      return `Admin Kecamatan ${districtName}`;
+    }
+
+    switch (role) {
+      case 'super_admin': return 'Super Admin';
+      case 'school_admin': return 'Admin Sekolah';
+      case 'district_admin': return 'Admin Kecamatan';
+      case 'regency_admin': return 'Admin Kabupaten';
+      default: return 'Admin Perpustakaan';
+    }
+  };
+
   const fetchMessages = async (pageNum: number, isInitial = false) => {
     if (pageNum > 1 && !hasMore) return;
     if (loadingMore) return;
@@ -204,7 +230,7 @@ export default function ChatRoomScreen({ route, navigation }: any) {
         <View style={{ flex: 1, marginLeft: Spacing.sm }}>
           <Text style={s.participantName} numberOfLines={1}>{otherParticipant?.full_name}</Text>
           <Text style={s.activeRole}>
-            {otherParticipant?.user_role === 'super_admin' ? 'Super Admin' : 'Admin Perpustakaan'}
+            {getRoleLabel(otherParticipant)}
           </Text>
         </View>
       </View>

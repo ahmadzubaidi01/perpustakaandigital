@@ -1,20 +1,23 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator, TextInput, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ActivityIndicator, TextInput, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { Paths, File } from 'expo-file-system';
+import { StorageAccessFramework } from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { borrowingsAPI } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { useTheme } from '../../context/ThemeContext';
 import { checkOnlineStatus } from '../../services/syncService';
+import { useNotificationStore } from '../../store/notificationStore';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 
-type FilterType = '' | 'pending' | 'approved' | 'reserved' | 'borrowed' | 'late' | 'returned' | 'cancelled';
+type FilterType = '' | 'pending' | 'approved' | 'borrowed' | 'late' | 'returned' | 'cancelled';
 
 const STATUS_OPTIONS = [
   { key: '', label: 'Semua' },
   { key: 'pending', label: 'Menunggu' },
   { key: 'approved', label: 'Disetujui' },
-  { key: 'reserved', label: 'Dipesan' },
   { key: 'borrowed', label: 'Dipinjam' },
   { key: 'late', label: 'Terlambat' },
   { key: 'returned', label: 'Dikembalikan' },
@@ -25,6 +28,7 @@ export default function BorrowingsScreen({ navigation }: any) {
   const { user } = useAuthStore();
   const { colors, isDark } = useTheme();
   const styles = getStyles(colors);
+  const { refreshTrigger } = useNotificationStore();
   const isAdmin = ['super_admin', 'regency_admin', 'district_admin', 'school_admin'].includes(user?.user_role || '');
 
   const [allBorrowings, setAllBorrowings] = useState<any[]>([]);
@@ -76,9 +80,108 @@ export default function BorrowingsScreen({ navigation }: any) {
     }
   }, [searchQuery, isAdmin]);
 
+  const handleExportCSV = async () => {
+    setLoading(true);
+    try {
+      const online = await checkOnlineStatus();
+      if (!online) {
+        Alert.alert('Offline', 'Tidak dapat mengekspor data saat offline.');
+        return;
+      }
+
+      const params: any = {
+        limit: 5000,
+        sort_by: 'created_at',
+        sort_order: 'DESC',
+      };
+      if (filter) {
+        params.borrowing_status = filter;
+      }
+      if (isAdmin && searchQuery.trim()) {
+        params.search = searchQuery.trim();
+      }
+
+      const res = await borrowingsAPI.list(params);
+      const list = res.data.data || [];
+
+      if (list.length === 0) {
+        Alert.alert('Info', 'Tidak ada data peminjaman untuk diekspor');
+        return;
+      }
+
+      // Convert to CSV
+      const headers = ['No', 'Kode Peminjaman', 'Judul Buku', 'Peminjam', 'NISN', 'Kelas', 'Status', 'Tanggal Pinjam', 'Tenggat', 'Tanggal Kembali', 'Denda'];
+      const csvRows = [headers.join(',')];
+
+      list.forEach((row: any, index: number) => {
+        const no = index + 1;
+        const code = `"${row.borrowing_code || ''}"`;
+        const bookTitle = `"${(row.book_qr?.book?.book_title || '').replace(/"/g, '""')}"`;
+        const borrower = `"${(row.borrower?.full_name || '').replace(/"/g, '""')}"`;
+        const nisn = `"${row.borrower?.student_id_number || ''}"`;
+        const className = `"${row.borrower?.class_name || ''}"`;
+        
+        let status = row.borrowing_status;
+        if (status === 'borrowed' && row.due_date && new Date(row.due_date) < new Date()) {
+          status = 'late';
+        }
+        const statusLabel = `"${status || ''}"`;
+        
+        const borrowDate = row.borrowed_at ? `"${new Date(row.borrowed_at).toLocaleString('id-ID')}"` : '""';
+        const dueDate = row.due_date ? `"${new Date(row.due_date).toLocaleString('id-ID')}"` : '""';
+        const returnDate = row.returned_at ? `"${new Date(row.returned_at).toLocaleString('id-ID')}"` : '""';
+        const penalty = row.late_penalty_amount || 0;
+
+        const rowValues = [no, code, bookTitle, borrower, nisn, className, statusLabel, borrowDate, dueDate, returnDate, penalty];
+        csvRows.push(rowValues.join(','));
+      });
+
+      const csvContent = '\uFEFF' + csvRows.join('\n'); // Add BOM for Excel UTF-8 support
+      const filename = `riwayat_peminjaman_${Date.now()}.csv`;
+
+      if (Platform.OS === 'android') {
+        let initialDir = undefined;
+        try {
+          initialDir = StorageAccessFramework.getUriForDirectoryInRoot('Download');
+        } catch (e) {
+          initialDir = 'content://com.android.externalstorage.documents/directory/primary%3ADownload';
+        }
+        
+        const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync(initialDir);
+        if (!permissions.granted) {
+          Alert.alert('Gagal', 'Izin akses folder ditolak. Data gagal disimpan.');
+          return;
+        }
+
+        const fileUri = await StorageAccessFramework.createFileAsync(
+          permissions.directoryUri,
+          filename.replace('.csv', ''),
+          'text/csv'
+        );
+
+        await StorageAccessFramework.writeAsStringAsync(fileUri, csvContent, { encoding: 'utf8' });
+        Alert.alert('Berhasil', `Data berhasil diunduh dan disimpan langsung ke local storage Anda!`);
+      } else {
+        const csvFile = new File(Paths.document, filename);
+        csvFile.write(csvContent);
+        const fileUri = csvFile.uri;
+        
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(fileUri, { mimeType: 'text/csv', dialogTitle: 'Ekspor Riwayat Peminjaman', UTI: 'public.comma-separated-values-text' });
+        } else {
+          Alert.alert('Gagal', 'Fitur berbagi file tidak tersedia di perangkat ini');
+        }
+      }
+    } catch (err: any) {
+      Alert.alert('Gagal', 'Terjadi kesalahan saat mengekspor data: ' + (err.message || 'Error'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchBorrowings();
-  }, [searchQuery]);
+  }, [searchQuery, refreshTrigger]);
 
   useEffect(() => {
     if (filter === '') {
@@ -153,8 +256,7 @@ export default function BorrowingsScreen({ navigation }: any) {
         return { bg: colors.warning500 + '15', text: colors.warning500, label: 'Menunggu' };
       case 'approved':
         return { bg: colors.info500 + '15', text: colors.info500, label: 'Disetujui' };
-      case 'reserved':
-        return { bg: colors.accent500 + '15', text: colors.accent500, label: 'Dipesan' };
+
       case 'borrowed':
         return { bg: colors.primary500 + '15', text: colors.primary400, label: 'Dipinjam' };
       case 'late':
@@ -173,6 +275,7 @@ export default function BorrowingsScreen({ navigation }: any) {
     const authorName = item.book_qr?.book?.author_name || '';
     const studentName = item.borrower?.full_name || '-';
     const studentNisn = item.borrower?.student_id_number || '-';
+    const studentClass = item.borrower?.class_name || '-';
     const dueDate = item.due_date ? new Date(item.due_date).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
     
     // Determine status (check if overdue)
@@ -211,7 +314,7 @@ export default function BorrowingsScreen({ navigation }: any) {
           {isAdmin && (
             <View style={styles.infoRow}>
               <Ionicons name="person-outline" size={14} color={colors.textMuted} />
-              <Text style={styles.infoText}>Peminjam: <Text style={styles.boldText}>{studentName} (NISN: {studentNisn})</Text></Text>
+              <Text style={styles.infoText}>Peminjam: <Text style={styles.boldText}>{studentName} (NISN: {studentNisn} • Kelas: {studentClass})</Text></Text>
             </View>
           )}
           {item.borrowed_at && (
@@ -276,7 +379,13 @@ export default function BorrowingsScreen({ navigation }: any) {
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Peminjaman</Text>
-        <View style={{ width: 24 }} />
+        {isAdmin ? (
+          <TouchableOpacity style={styles.backIcon} onPress={handleExportCSV}>
+            <Ionicons name="download-outline" size={24} color={colors.primary400} />
+          </TouchableOpacity>
+        ) : (
+          <View style={{ width: 24 }} />
+        )}
       </View>
 
       {/* Horizontal Status Filter Chips */}

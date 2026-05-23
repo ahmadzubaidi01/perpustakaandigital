@@ -69,7 +69,7 @@ const uploadSingle = (fieldName: string) => {
     storage,
     fileFilter,
     limits: {
-      fileSize: env.UPLOAD_MAX_FILE_SIZE,
+      fileSize: 2 * 1024 * 1024, // 2MB Limit
       files: 1,
     },
   }).single(fieldName);
@@ -83,7 +83,7 @@ const uploadMultiple = (fieldName: string, maxCount: number = 5) => {
     storage,
     fileFilter,
     limits: {
-      fileSize: env.UPLOAD_MAX_FILE_SIZE,
+      fileSize: 2 * 1024 * 1024, // 2MB Limit
       files: maxCount,
     },
   }).array(fieldName, maxCount);
@@ -97,7 +97,7 @@ const uploadFields = (fields: multer.Field[]) => {
     storage,
     fileFilter,
     limits: {
-      fileSize: env.UPLOAD_MAX_FILE_SIZE,
+      fileSize: 2 * 1024 * 1024, // 2MB Limit
     },
   }).fields(fields);
 };

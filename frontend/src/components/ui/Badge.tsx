@@ -39,7 +39,6 @@ export const BookStatusBadge = ({ status }: { status: string }) => {
   const map: Record<string, BadgeProps['variant']> = {
     available: 'success',
     borrowed: 'warning',
-    reserved: 'info',
     damaged: 'danger',
     lost: 'danger',
     maintenance: 'neutral',
@@ -47,7 +46,6 @@ export const BookStatusBadge = ({ status }: { status: string }) => {
   const label: Record<string, string> = {
     available: 'Tersedia',
     borrowed: 'Dipinjam',
-    reserved: 'Dipesan',
     damaged: 'Rusak',
     lost: 'Hilang',
     maintenance: 'Perawatan',

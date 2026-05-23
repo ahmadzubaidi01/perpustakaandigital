@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, Platform, TextInput, ScrollView, FlatList, KeyboardAvoidingView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, Platform, TextInput, ScrollView, FlatList, KeyboardAvoidingView, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
@@ -48,6 +48,7 @@ export default function ScanScreen() {
   const [noteText, setNoteText] = useState('');
   const [showAnomalies, setShowAnomalies] = useState(false);
   const [showAuditPanel, setShowAuditPanel] = useState(false);
+  const [isKeyboardVisible, setKeyboardVisible] = useState(false);
 
   const searchStudents = async (query: string) => {
     if (!query || query.trim().length < 2) {
@@ -107,7 +108,20 @@ export default function ScanScreen() {
       fetchAnomalies();
     }
 
-    return () => clearInterval(netInterval);
+    const keyboardDidShowListener = Keyboard.addListener(
+      'keyboardDidShow',
+      () => setKeyboardVisible(true)
+    );
+    const keyboardDidHideListener = Keyboard.addListener(
+      'keyboardDidHide',
+      () => setKeyboardVisible(false)
+    );
+
+    return () => {
+      clearInterval(netInterval);
+      keyboardDidShowListener.remove();
+      keyboardDidHideListener.remove();
+    };
   }, []);
 
   const fetchTrace = async (qrId: number) => {
@@ -215,8 +229,7 @@ export default function ScanScreen() {
 
     Alert.alert(
       'Konfirmasi Ubah Status',
-      `Apakah Anda yakin ingin menandai buku ini sebagai "${
-        status === 'active' ? 'Aktif' : status === 'damaged' ? 'Rusak' : 'Hilang'
+      `Apakah Anda yakin ingin menandai buku ini sebagai "${status === 'active' ? 'Aktif' : status === 'damaged' ? 'Rusak' : 'Hilang'
       }"?`,
       [
         { text: 'Batal', style: 'cancel' },
@@ -338,23 +351,7 @@ export default function ScanScreen() {
     }
   };
 
-  const handleStudentReserve = async (bookQrId: number) => {
-    setActionLoading(true);
-    try {
-      await borrowingsAPI.reserve({ book_qr_id: bookQrId });
-      Alert.alert(
-        'Reservasi Sukses',
-        'Reservasi buku berhasil disimpan!',
-        [{ text: 'OK', onPress: () => { setResult(null); setTraceData(null); } }]
-      );
-    } catch (err: any) {
-      console.warn('Gagal melakukan reservasi:', err);
-      const errMsg = err.response?.data?.message || 'Terjadi kesalahan saat melakukan reservasi';
-      Alert.alert('Gagal Reservasi', errMsg);
-    } finally {
-      setActionLoading(false);
-    }
-  };
+
 
   const renderStatusBadge = (status: string) => {
     switch (status) {
@@ -444,21 +441,21 @@ export default function ScanScreen() {
   };
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-      <SafeAreaView style={styles.safeContainer}>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+      <View style={styles.safeContainer}>
         <ScrollView style={styles.container} contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
           {scanning ? (
             <View style={StyleSheet.absoluteFillObject}>
-              <CameraView 
-                style={StyleSheet.absoluteFillObject} 
-                barcodeScannerSettings={{ barcodeTypes: ['qr'] }} 
-                onBarcodeScanned={handleBarCodeScanned} 
+              <CameraView
+                style={StyleSheet.absoluteFillObject}
+                barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                onBarcodeScanned={handleBarCodeScanned}
               />
               <View style={styles.overlay}>
                 <View style={styles.modeBanner}>
                   <Ionicons name="scan-outline" size={16} color={colors.white} />
                   <Text style={styles.modeBannerText}>
-                    {scanMode === 'verification' ? 'Mode: Verifikasi QR' : scanMode === 'borrowing' ? `Peminjaman (Siswa: ${studentId})` : 'Mode: Pengembalian Cepat'}
+                    {scanMode === 'verification' ? 'Mode: Verifikasi QR' : scanMode === 'borrowing' ? `Peminjaman (Siswa: ${selectedStudent ? selectedStudent.full_name : studentId})` : 'Mode: Pengembalian Cepat'}
                   </Text>
                 </View>
                 <View style={styles.frame} />
@@ -485,56 +482,57 @@ export default function ScanScreen() {
                   </View>
 
                   {!isAdmin && result.data?.book_qr && (
-                    <View style={styles.card}>
-                      <Text style={styles.lbl}>STATUS BUKU FISIK</Text>
-                      <View style={styles.traceRow}>
-                        <Text style={styles.traceLabel}>Serial:</Text>
-                        <Text style={styles.traceVal}>{result.data.book_qr.qr_serial_number || '-'}</Text>
+                    result.data?.scan_type === 'auto_return' ? (
+                      <View style={styles.card}>
+                        <Text style={[styles.lbl, { color: colors.success500 }]}>PENGEMBALIAN OTOMATIS SUKSES</Text>
+                        <Text style={styles.val}>Buku Berhasil Dikembalikan</Text>
+                        <Text style={styles.sub}>Buku "{result.data?.book?.book_title}" telah berhasil dikembalikan karena Anda memindai ulang buku yang sedang aktif Anda pinjam.</Text>
+                        {result.data?.penalty_amount > 0 && (
+                          <View style={{ marginTop: Spacing.sm, flexDirection: 'row', alignItems: 'center', gap: Spacing.xs }}>
+                            <Ionicons name="wallet-outline" size={16} color={colors.danger500} />
+                            <Text style={{ color: colors.danger500, fontWeight: '700', fontSize: FontSize.sm }}>
+                              Denda Keterlambatan: Rp{Number(result.data.penalty_amount).toLocaleString('id-ID')}
+                            </Text>
+                          </View>
+                        )}
                       </View>
-                      <View style={styles.traceRow}>
-                        <Text style={styles.traceLabel}>Status:</Text>
-                        {renderStatusBadge(result.data.book_qr.qr_status)}
+                    ) : (
+                      <View style={styles.card}>
+                        <Text style={styles.lbl}>STATUS BUKU FISIK</Text>
+                        <View style={styles.traceRow}>
+                          <Text style={styles.traceLabel}>Serial:</Text>
+                          <Text style={styles.traceVal}>{result.data.book_qr.qr_serial_number || '-'}</Text>
+                        </View>
+                        <View style={styles.traceRow}>
+                          <Text style={styles.traceLabel}>Status:</Text>
+                          {renderStatusBadge(result.data.book_qr.qr_status)}
+                        </View>
+
+                        {result.data.book_qr.qr_status === 'active' ? (
+                          <View style={{ marginTop: Spacing.lg, gap: Spacing.md }}>
+                            <TouchableOpacity
+                              style={[styles.btn, actionLoading && styles.disabledBtn]}
+                              disabled={actionLoading}
+                              onPress={() => handleStudentBorrow(result.data.book_qr.book_qr_id)}
+                            >
+                              {actionLoading ? (
+                                <ActivityIndicator size="small" color={colors.white} />
+                              ) : (
+                                <>
+                                  <Ionicons name="book-outline" size={20} color={colors.white} />
+                                  <Text style={styles.btnT}>Ajukan Peminjaman</Text>
+                                </>
+                              )}
+                            </TouchableOpacity>
+                          </View>
+                        ) : (
+                          <View style={[styles.ok, { backgroundColor: colors.danger500 + '15', marginTop: Spacing.md, alignSelf: 'stretch' }]}>
+                            <Ionicons name="close-circle-outline" size={20} color={colors.danger500} />
+                            <Text style={[styles.okT, { color: colors.danger500 }]}>Buku tidak tersedia untuk dipinjam</Text>
+                          </View>
+                        )}
                       </View>
-
-                      {result.data.book_qr.qr_status === 'active' ? (
-                        <View style={{ marginTop: Spacing.lg, gap: Spacing.md }}>
-                          <TouchableOpacity
-                            style={[styles.btn, actionLoading && styles.disabledBtn]}
-                            disabled={actionLoading}
-                            onPress={() => handleStudentBorrow(result.data.book_qr.book_qr_id)}
-                          >
-                            {actionLoading ? (
-                              <ActivityIndicator size="small" color={colors.white} />
-                            ) : (
-                              <>
-                                <Ionicons name="book-outline" size={20} color={colors.white} />
-                                <Text style={styles.btnT}>Ajukan Peminjaman</Text>
-                              </>
-                            )}
-                          </TouchableOpacity>
-
-                          <TouchableOpacity
-                            style={[styles.btn, { backgroundColor: colors.accent500 }, actionLoading && styles.disabledBtn]}
-                            disabled={actionLoading}
-                            onPress={() => handleStudentReserve(result.data.book_qr.book_qr_id)}
-                          >
-                            {actionLoading ? (
-                              <ActivityIndicator size="small" color={colors.white} />
-                            ) : (
-                              <>
-                                <Ionicons name="bookmark-outline" size={20} color={colors.white} />
-                                <Text style={styles.btnT}>Reservasi Buku</Text>
-                              </>
-                            )}
-                          </TouchableOpacity>
-                        </View>
-                      ) : (
-                        <View style={[styles.ok, { backgroundColor: colors.danger500 + '15', marginTop: Spacing.md, alignSelf: 'stretch' }]}>
-                          <Ionicons name="close-circle-outline" size={20} color={colors.danger500} />
-                          <Text style={[styles.okT, { color: colors.danger500 }]}>Buku tidak tersedia untuk dipinjam</Text>
-                        </View>
-                      )}
-                    </View>
+                    )
                   )}
 
                   {isAdmin && (
@@ -684,15 +682,17 @@ export default function ScanScreen() {
               <View style={[styles.netStatus, { backgroundColor: isOnline ? colors.success500 + '15' : colors.danger500 + '15' }]}>
                 <Ionicons name={isOnline ? 'cloud-done-outline' : 'cloud-offline-outline'} size={18} color={isOnline ? colors.success500 : colors.danger500} />
                 <Text style={[styles.netStatusText, { color: isOnline ? colors.success500 : colors.danger500 }]}>
-                  {isOnline ? 'Terhubung ke Server' : 'Mode Offline (Lokal)'}
+                  {isOnline ? 'Terhubung ke Server' : 'Mode Offline'}
                 </Text>
               </View>
 
-              <View style={styles.hero}>
-                <View style={styles.icon}><Ionicons name="qr-code-outline" size={56} color={colors.primary400} /></View>
-                <Text style={styles.title}>QR Code Scanner</Text>
-                <Text style={styles.desc}>Pindai QR code buku untuk peminjaman, pengembalian, atau verifikasi status.</Text>
-              </View>
+              {!isKeyboardVisible && (
+                <View style={styles.hero}>
+                  <View style={styles.icon}><Ionicons name="qr-code-outline" size={56} color={colors.primary400} /></View>
+                  <Text style={styles.title}>QR Code Scanner</Text>
+                  <Text style={styles.desc}>Pindai QR code buku untuk peminjaman, pengembalian, atau verifikasi status.</Text>
+                </View>
+              )}
 
               {/* Mode Selector for Admins */}
               {isAdmin && (
@@ -981,7 +981,7 @@ export default function ScanScreen() {
             </View>
           )}
         </ScrollView>
-      </SafeAreaView>
+      </View>
     </KeyboardAvoidingView>
   );
 }

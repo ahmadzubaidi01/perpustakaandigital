@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { Op } from 'sequelize';
+import fs from 'fs';
+import path from 'path';
 import { Book, BookQr, BookCategory, School } from '../models';
 import { BookStatus, BorrowingStatus, AuditActionType, TABLE_NAMES, UserRole } from '../config/constants';
 import apiResponse from '../utils/apiResponse';
@@ -47,7 +49,19 @@ const updateBook = asyncHandler(async (req: Request, res: Response): Promise<voi
   if (rack_location !== undefined) updates.rack_location = rack_location;
   if (book_description !== undefined) updates.book_description = book_description;
   if (book_status) updates.book_status = book_status;
-  if (req.file) updates.cover_image_url = `/uploads/${req.file.filename}`;
+  if (req.file) {
+    updates.cover_image_url = `/uploads/${req.file.filename}`;
+    if (book.cover_image_url) {
+      const oldPath = path.resolve(__dirname, '..', book.cover_image_url.replace(/^\//, ''));
+      if (fs.existsSync(oldPath)) {
+        try {
+          fs.unlinkSync(oldPath);
+        } catch (err) {
+          // Silent catch or log error
+        }
+      }
+    }
+  }
 
   // Handle school_id update
   if (school_id !== undefined) {
@@ -111,7 +125,7 @@ const getBook = asyncHandler(async (req: Request, res: Response): Promise<void> 
             required: false,
             where: {
               borrowing_status: {
-                [Op.in]: ['pending', 'approved', 'borrowed', 'late', 'reserved']
+                [Op.in]: ['pending', 'approved', 'borrowed', 'late']
               }
             },
             attributes: ['borrowing_id', 'borrowing_status', 'due_date'],

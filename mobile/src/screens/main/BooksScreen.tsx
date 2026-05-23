@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, RefreshControl, Dimensions, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, RefreshControl, Dimensions, ActivityIndicator, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
-import { booksAPI, categoriesAPI } from '../../services/api';
+import api, { booksAPI, categoriesAPI } from '../../services/api';
 import { cacheBooks, getCachedBooks } from '../../services/db';
 import { checkOnlineStatus } from '../../services/syncService';
 import { useTheme } from '../../context/ThemeContext';
@@ -13,7 +13,6 @@ const { width } = Dimensions.get('window');
 const statusLabels: Record<string, string> = {
   available: 'Tersedia',
   borrowed: 'Dipinjam',
-  reserved: 'Dipesan',
   maintenance: 'Perawatan',
   damaged: 'Rusak',
   lost: 'Hilang',
@@ -130,13 +129,19 @@ export default function BooksScreen({ navigation }: any) {
   const statusColor = (s: string) => ({
     available: colors.success500,
     borrowed: colors.warning500,
-    reserved: colors.info500,
     maintenance: colors.surface400,
     damaged: colors.danger500,
     lost: colors.danger500,
   }[s] || colors.surface400);
 
   const renderBook = ({ item }: any) => {
+    const showImage = !!item.cover_image_url;
+    const coverUri = showImage
+      ? (item.cover_image_url.startsWith('http')
+          ? item.cover_image_url
+          : `${(api.defaults.baseURL || '').replace('/api', '')}${item.cover_image_url}`)
+      : null;
+
     if (viewMode === 'grid') {
       return (
         <TouchableOpacity
@@ -145,7 +150,11 @@ export default function BooksScreen({ navigation }: any) {
           onPress={() => navigation.navigate('BookDetails', { bookId: item.book_id })}
         >
           <View style={styles.gridBookCover}>
-            <Ionicons name="book" size={32} color={colors.surface400} />
+            {coverUri ? (
+              <Image source={{ uri: coverUri }} style={{ width: '100%', height: '100%', resizeMode: 'cover' }} />
+            ) : (
+              <Ionicons name="book" size={32} color={colors.surface400} />
+            )}
           </View>
           <View style={styles.gridInfo}>
             <Text style={styles.gridTitle} numberOfLines={2}>{item.book_title}</Text>
@@ -168,14 +177,18 @@ export default function BooksScreen({ navigation }: any) {
         onPress={() => navigation.navigate('BookDetails', { bookId: item.book_id })}
       >
         <View style={styles.listBookCover}>
-          <Ionicons name="book" size={24} color={colors.surface400} />
+          {coverUri ? (
+            <Image source={{ uri: coverUri }} style={{ width: '100%', height: '100%', resizeMode: 'cover' }} />
+          ) : (
+            <Ionicons name="book" size={24} color={colors.surface400} />
+          )}
         </View>
         <View style={{ flex: 1, justifyContent: 'center' }}>
           <Text style={styles.listTitle} numberOfLines={1}>{item.book_title}</Text>
           <Text style={styles.listAuthor} numberOfLines={1}>{item.author_name}</Text>
           <View style={styles.listMeta}>
             <View style={[styles.badge, { backgroundColor: statusColor(item.book_status) + '15' }]}>
-              <Text style={[styles.badgeText, { color: statusColor(item.book_status) }]}>{statusLabels[item.book_status] || item.book_status}</Text>
+              <Text style={[styles.badgeText, { color: statusColor(item.badgeText || item.book_status) }]}>{statusLabels[item.book_status] || item.book_status}</Text>
             </View>
             <Text style={styles.stockText}>{item.available_stock}/{item.total_stock}</Text>
           </View>
@@ -275,7 +288,6 @@ export default function BooksScreen({ navigation }: any) {
                 { id: '', label: 'Semua Status' },
                 { id: 'available', label: 'Tersedia' },
                 { id: 'borrowed', label: 'Dipinjam' },
-                { id: 'reserved', label: 'Dipesan' },
                 { id: 'maintenance', label: 'Perawatan' },
                 { id: 'damaged', label: 'Rusak' },
                 { id: 'lost', label: 'Hilang' },
@@ -366,7 +378,7 @@ const getStyles = (colors: any) =>
     listMeta: { flexDirection: 'row', alignItems: 'center', marginTop: Spacing.xs, gap: Spacing.sm },
 
     gridCard: { width: (width - Spacing.lg * 2 - Spacing.md) / 2, backgroundColor: colors.surface800, borderRadius: BorderRadius.lg, overflow: 'hidden', marginBottom: Spacing.md, borderWidth: 1, borderColor: colors.surface600, marginRight: Spacing.md },
-    gridBookCover: { height: 130, backgroundColor: colors.surface700, alignItems: 'center', justifyContent: 'center' },
+    gridBookCover: { width: '100%', aspectRatio: 3/4, backgroundColor: colors.surface700, alignItems: 'center', justifyContent: 'center' },
     gridInfo: { padding: Spacing.md, gap: 2 },
     gridTitle: { fontSize: FontSize.sm, fontWeight: '700', color: colors.text },
     gridAuthor: { fontSize: FontSize.xs, color: colors.textMuted },

@@ -96,10 +96,11 @@ export const borrowingsAPI = {
   approve: (id: number) => api.patch(`/v1/borrowings/${id}/approve`),
   return: (id: number) => api.patch(`/v1/borrowings/${id}/return`),
   extend: (id: number) => api.patch(`/v1/borrowings/${id}/extend`),
-  reserve: (data: { book_qr_id: number }) => api.post('/v1/borrowings/reserve', data),
   quickBorrow: (data: { student_id: number; qr_payload: string }) => api.post('/v1/borrowings/quick-borrow', data),
   quickReturn: (data: { qr_payload: string }) => api.post('/v1/borrowings/quick-return', data),
   searchStudent: (q: string) => api.get('/v1/borrowings/search-student', { params: { q } }),
+  delete: (id: number) => api.delete(`/v1/borrowings/${id}`),
+  bulkDelete: (ids: number[]) => api.delete('/v1/borrowings', { data: { borrowing_ids: ids } }),
 };
 
 // Users API
@@ -111,6 +112,8 @@ export const usersAPI = {
   update: (id: number, data: FormData) =>
     api.put(`/v1/users/${id}`, data, { headers: { 'Content-Type': 'multipart/form-data' } }),
   delete: (id: number) => api.delete(`/v1/users/${id}`),
+  importTemplate: (format?: string) => api.get('/v1/users/import-template', { params: format ? { format } : undefined, responseType: 'blob' }),
+  import: (formData: FormData) => api.post('/v1/users/import', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
   updateProfile: (data: FormData) =>
     api.put('/v1/users/profile', data, { headers: { 'Content-Type': 'multipart/form-data' } }),
   changePassword: (data: { current_password: string; new_password: string }) =>
@@ -178,6 +181,7 @@ export const categoriesAPI = {
 export const settingsAPI = {
   get: (schoolId?: number) => api.get(`/v1/settings/${schoolId || ''}`),
   update: (data: any, schoolId?: number) => api.put(`/v1/settings/${schoolId || ''}`, data),
+  cleanup: () => api.post('/v1/settings/cleanup'),
 };
 
 // Chat API
@@ -204,4 +208,13 @@ export const inventoryAPI = {
     api.patch(`/v1/inventory/qr/${bookQrId}/status`, { qr_status, notes }),
   bulkUpdateStatus: (qr_ids: number[], qr_status: string, notes?: string) =>
     api.patch('/v1/inventory/qr/bulk-status', { qr_ids, qr_status, notes }),
+};
+
+// Helper to resolve media URLs dynamically based on API URL
+export const getMediaUrl = (path: string | null | undefined): string => {
+  if (!path) return '';
+  if (path.startsWith('http')) return path;
+  
+  // Return relative path so that Next.js rewrites/proxy handles it seamlessly
+  return path.startsWith('/') ? path : `/${path}`;
 };

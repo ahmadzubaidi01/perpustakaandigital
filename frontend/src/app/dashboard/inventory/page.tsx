@@ -241,9 +241,16 @@ function ScannerStockTab() {
                   <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Riwayat Peminjaman Terakhir</p>
                   {traceResult.borrowings.slice(0, 5).map((b: any) => (
                     <div key={b.borrowing_id} className="flex items-center justify-between p-2.5 rounded-lg bg-muted/30 border border-border text-xs">
-                      <div>
+                      <div className="flex flex-col">
                         <span className="font-semibold text-foreground">{b.borrower?.full_name || '-'}</span>
-                        <span className="text-muted-foreground ml-2">{b.borrowing_code}</span>
+                        {(b.borrower?.student_id_number || b.borrower?.class_name) && (
+                          <span className="text-[10px] text-muted-foreground mt-0.5">
+                            {b.borrower?.student_id_number ? `NISN: ${b.borrower.student_id_number}` : ''}
+                            {b.borrower?.student_id_number && b.borrower?.class_name ? ' • ' : ''}
+                            {b.borrower?.class_name ? `Kelas: ${b.borrower.class_name}` : ''}
+                          </span>
+                        )}
+                        <span className="text-[10px] font-mono text-primary font-bold mt-0.5">{b.borrowing_code}</span>
                       </div>
                       <Badge variant={b.borrowing_status === 'returned' ? 'success' : b.borrowing_status === 'borrowed' ? 'primary' : 'warning'}>
                         {b.borrowing_status}

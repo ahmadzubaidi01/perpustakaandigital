@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSettings, updateSettings } from '../../controllers/settingController';
+import { getSettings, updateSettings, cleanupUnusedFiles } from '../../controllers/settingController';
 import { authenticate } from '../../middleware/auth';
 import { requireMinRole } from '../../middleware/rbac';
 import { UserRole } from '../../config/constants';
@@ -15,5 +15,7 @@ router.get('/:school_id', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), g
 
 router.put('/', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), validate(settingsSchema), updateSettings);
 router.put('/:school_id', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), validate(settingsSchema), updateSettings);
+
+router.post('/cleanup', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), cleanupUnusedFiles);
 
 export default router;

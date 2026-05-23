@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Modal } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Modal, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuthStore } from '../../store/authStore';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
-import { booksAPI, categoriesAPI, regionsAPI } from '../../services/api';
+import api, { booksAPI, categoriesAPI, regionsAPI } from '../../services/api';
+import * as ImagePicker from 'expo-image-picker';
 
 export default function BookCreateEditScreen({ route, navigation }: any) {
   const { bookId } = route.params || {};
@@ -33,6 +34,8 @@ export default function BookCreateEditScreen({ route, navigation }: any) {
   const [totalStock, setTotalStock] = useState('1');
   const [bookDescription, setBookDescription] = useState('');
   const [schoolId, setSchoolId] = useState<number | null>(null);
+  const [coverImageUri, setCoverImageUri] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<any>(null);
 
   // Dropdown visibility
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
@@ -63,6 +66,11 @@ export default function BookCreateEditScreen({ route, navigation }: any) {
           setTotalStock(String(b.total_stock || '0'));
           setBookDescription(b.book_description || '');
           setSchoolId(b.school_id || null);
+          if (b.cover_image_url) {
+            setCoverImageUri(b.cover_image_url.startsWith('http') ? b.cover_image_url : `${(api.defaults.baseURL || '').replace('/api', '')}${b.cover_image_url}`);
+          } else {
+            setCoverImageUri(null);
+          }
         }
       } catch (err) {
         Alert.alert('Kesalahan', 'Gagal memuat referensi data.');
@@ -72,6 +80,39 @@ export default function BookCreateEditScreen({ route, navigation }: any) {
     };
     init();
   }, [bookId, isEdit, isHighAdmin]);
+
+  const handlePickImage = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Izin Ditolak', 'Aplikasi memerlukan izin galeri untuk memilih sampul.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [3, 4],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        if (asset.fileSize && asset.fileSize > 2 * 1024 * 1024) {
+          Alert.alert('Gagal', 'Ukuran foto maksimal adalah 2MB.');
+          return;
+        }
+        setCoverImageUri(asset.uri);
+        setImageFile({
+          uri: asset.uri,
+          name: asset.fileName || `cover_${Date.now()}.jpg`,
+          type: asset.mimeType || 'image/jpeg',
+        });
+      }
+    } catch (e) {
+      Alert.alert('Gagal', 'Gagal memilih gambar.');
+    }
+  };
 
   const handleSave = async () => {
     if (!bookTitle.trim() || !authorName.trim() || !categoryId) {
@@ -85,28 +126,36 @@ export default function BookCreateEditScreen({ route, navigation }: any) {
     }
 
     setSaving(true);
-    const payload: any = {
-      book_title: bookTitle.trim(),
-      author_name: authorName.trim(),
-      publisher_name: publisherName.trim() || null,
-      publication_year: publicationYear.trim() ? Number(publicationYear) : null,
-      rack_location: rackLocation.trim() || null,
-      category_id: categoryId,
-      isbn_code: isbnCode.trim() || null,
-      total_stock: Number(totalStock) || 0,
-      book_description: bookDescription.trim() || null,
-    };
 
-    if (isHighAdmin) {
-      payload.school_id = schoolId;
+    const formData = new FormData();
+    formData.append('book_title', bookTitle.trim());
+    formData.append('author_name', authorName.trim());
+    formData.append('publisher_name', publisherName.trim() || '');
+    if (publicationYear.trim()) formData.append('publication_year', publicationYear.trim());
+    formData.append('rack_location', rackLocation.trim() || '');
+    if (categoryId) formData.append('category_id', String(categoryId));
+    formData.append('isbn_code', isbnCode.trim() || '');
+    formData.append('total_stock', totalStock || '0');
+    formData.append('book_description', bookDescription.trim() || '');
+
+    if (isHighAdmin && schoolId) {
+      formData.append('school_id', String(schoolId));
+    }
+
+    if (imageFile) {
+      formData.append('cover_image', {
+        uri: imageFile.uri,
+        name: imageFile.name,
+        type: imageFile.type,
+      } as any);
     }
 
     try {
       if (isEdit) {
-        await booksAPI.update(bookId, payload);
+        await booksAPI.update(bookId, formData);
         Alert.alert('Sukses', 'Katalog buku berhasil diperbarui!');
       } else {
-        await booksAPI.create(payload);
+        await booksAPI.create(formData);
         Alert.alert('Sukses', 'Buku baru berhasil didaftarkan!');
       }
       navigation.goBack();
@@ -135,6 +184,26 @@ export default function BookCreateEditScreen({ route, navigation }: any) {
       ) : (
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+            
+            {/* Cover Image Selector */}
+            <View style={styles.imageSelectorContainer}>
+              <Text style={styles.label}>Sampul Buku</Text>
+              <TouchableOpacity style={styles.imagePickerCard} onPress={handlePickImage} activeOpacity={0.8}>
+                {coverImageUri ? (
+                  <Image source={{ uri: coverImageUri }} style={styles.coverImagePreview} />
+                ) : (
+                  <View style={styles.placeholderCardContent}>
+                    <Ionicons name="camera-outline" size={32} color={colors.textMuted} />
+                    <Text style={styles.placeholderCardText}>Pilih Foto Sampul (Maks 2MB)</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+              {coverImageUri && (
+                <TouchableOpacity style={styles.removeImageBtn} onPress={() => { setCoverImageUri(null); setImageFile(null); }}>
+                  <Text style={styles.removeImageBtnText}>Hapus Sampul</Text>
+                </TouchableOpacity>
+              )}
+            </View>
             
             {/* School Selector (High-level Admins Only) */}
             {isHighAdmin && (
@@ -322,4 +391,12 @@ const getStyles = (colors: any) =>
     modalSelectItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: Spacing.md, borderRadius: BorderRadius.md, backgroundColor: colors.surface900, marginBottom: Spacing.xs, borderWidth: 1, borderColor: colors.surface600 },
     modalActiveItem: { borderColor: colors.primary400, backgroundColor: colors.primary500 + '10' },
     modalSelectItemText: { color: colors.text, fontSize: FontSize.sm, fontWeight: '600' },
+
+    imageSelectorContainer: { gap: Spacing.sm, alignItems: 'center', marginBottom: Spacing.md },
+    imagePickerCard: { width: 140, height: 180, borderRadius: BorderRadius.lg, backgroundColor: colors.surface800, borderStyle: 'dashed', borderWidth: 2, borderColor: colors.surface600, overflow: 'hidden', justifyContent: 'center', alignItems: 'center' },
+    coverImagePreview: { width: '100%', height: '100%', resizeMode: 'cover' },
+    placeholderCardContent: { alignItems: 'center', gap: Spacing.xs, paddingHorizontal: Spacing.md },
+    placeholderCardText: { color: colors.textMuted, fontSize: FontSize.xs, fontWeight: '600', textAlign: 'center' },
+    removeImageBtn: { paddingVertical: Spacing.xs, paddingHorizontal: Spacing.md, borderRadius: BorderRadius.sm, backgroundColor: colors.danger500 + '20', borderWidth: 1, borderColor: colors.danger500 + '30', marginTop: Spacing.xs },
+    removeImageBtnText: { color: colors.danger500, fontSize: FontSize.xs, fontWeight: '700' },
   });

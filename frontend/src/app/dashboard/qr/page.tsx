@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { QrCode, Camera, X, CheckCircle, Loader2, Download, List, Scan, Plus, Book, Bookmark } from 'lucide-react';
+import { QrCode, Camera, X, CheckCircle, Loader2, Download, List, Scan, Plus, Book } from 'lucide-react';
 import { qrAPI, booksAPI, borrowingsAPI } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import { QRCodeSVG } from 'qrcode.react';
@@ -112,19 +112,6 @@ function ScannerTab() {
       setResult(null);
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Terjadi kesalahan saat mengajukan peminjaman');
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleStudentReserve = async (bookQrId: number) => {
-    setActionLoading(true);
-    try {
-      await borrowingsAPI.reserve({ book_qr_id: bookQrId });
-      toast.success('Reservasi buku berhasil disimpan!');
-      setResult(null);
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Terjadi kesalahan saat melakukan reservasi');
     } finally {
       setActionLoading(false);
     }
@@ -262,24 +249,15 @@ function ScannerTab() {
                 {!isAdmin && (
                   <div className="pt-2">
                     {result.book_qr?.qr_status === 'active' ? (
-                      <div className="flex flex-col sm:flex-row gap-3">
+                      <div className="flex justify-center">
                         <Button
                           onClick={() => handleStudentBorrow(result.book_qr?.book_qr_id)}
                           disabled={actionLoading}
                           variant="primary"
-                          className="flex-grow"
+                          className="w-full"
                           leftIcon={actionLoading ? <Loader2 size={16} className="animate-spin" /> : <Book size={16} />}
                         >
                           Ajukan Peminjaman
-                        </Button>
-                        <Button
-                          onClick={() => handleStudentReserve(result.book_qr?.book_qr_id)}
-                          disabled={actionLoading}
-                          variant="outline"
-                          className="flex-grow text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-900/50 hover:bg-amber-50 dark:hover:bg-amber-950/20"
-                          leftIcon={actionLoading ? <Loader2 size={16} className="animate-spin" /> : <Bookmark size={16} />}
-                        >
-                          Reservasi Buku
                         </Button>
                       </div>
                     ) : (

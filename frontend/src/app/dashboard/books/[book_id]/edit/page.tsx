@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ArrowLeft, Save, Upload, Book as BookIcon } from 'lucide-react';
-import { booksAPI, categoriesAPI, regionsAPI } from '@/lib/api';
+import { booksAPI, categoriesAPI, regionsAPI, getMediaUrl } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import toast from 'react-hot-toast';
 
@@ -69,7 +69,7 @@ export default function EditBookPage() {
           school_id: book.school_id?.toString() || '',
         });
         if (book.cover_image_url) {
-          setPreview(`http://localhost:5000${book.cover_image_url}`);
+          setPreview(getMediaUrl(book.cover_image_url));
         }
 
         // Fetch schools if regional admin
@@ -103,6 +103,10 @@ export default function EditBookPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        toast.error('Ukuran file foto maksimal 2MB');
+        return;
+      }
       setCoverFile(file);
       setPreview(URL.createObjectURL(file));
     }
@@ -186,7 +190,7 @@ export default function EditBookPage() {
                 <Upload size={16} /> Ganti Gambar
                 <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleFileChange} className="hidden" />
               </label>
-              <p className="text-xs mt-2 text-muted-foreground">Format: JPG, PNG, WebP. Maks: 5MB</p>
+              <p className="text-xs mt-2 text-muted-foreground">Format: JPG, PNG, WebP. Maks: 2MB</p>
             </div>
           </div>
         </Card>

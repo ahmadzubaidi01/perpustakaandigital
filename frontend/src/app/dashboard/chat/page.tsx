@@ -20,6 +20,20 @@ const roleLabels: Record<string, string> = {
   school_admin: 'Admin Sekolah',
 };
 
+const getDynamicRoleLabel = (u: any): string => {
+  if (!u) return '';
+  if (u.user_role === 'school_admin' && u.school?.school_name) {
+    return `Admin ${u.school.school_name}`;
+  }
+  if (u.user_role === 'regency_admin' && u.regency?.regency_name) {
+    return `Admin ${u.regency.regency_name}`;
+  }
+  if (u.user_role === 'district_admin' && u.district?.district_name) {
+    return `Admin Kecamatan ${u.district.district_name}`;
+  }
+  return roleLabels[u.user_role] || u.user_role || '';
+};
+
 const roleColors: Record<string, string> = {
   super_admin: 'bg-purple-100 text-purple-700 dark:bg-purple-950/30 dark:text-purple-400',
   regency_admin: 'bg-blue-100 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400',
@@ -217,7 +231,7 @@ export default function ChatPage() {
                       </div>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${roleColors[other?.user_role] || 'bg-muted text-muted-foreground'}`}>
-                          {roleLabels[other?.user_role] || other?.user_role}
+                          {getDynamicRoleLabel(other)}
                         </span>
                       </div>
                       {conv.last_message && (
@@ -253,7 +267,7 @@ export default function ChatPage() {
                 <div>
                   <p className="text-sm font-bold text-foreground">{otherUser.full_name}</p>
                   <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${roleColors[otherUser.user_role] || ''}`}>
-                    {roleLabels[otherUser.user_role] || otherUser.user_role}
+                    {getDynamicRoleLabel(otherUser)}
                   </span>
                 </div>
                 <div className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -351,7 +365,7 @@ export default function ChatPage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-foreground truncate">{r.full_name}</p>
                     <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${roleColors[r.user_role] || ''}`}>
-                      {roleLabels[r.user_role] || r.user_role}
+                      {getDynamicRoleLabel(r)}
                     </span>
                   </div>
                 </button>

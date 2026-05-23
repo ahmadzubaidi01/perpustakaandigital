@@ -22,6 +22,39 @@ export default function SettingsScreen({ navigation }: any) {
   const [maxExtensions, setMaxExtensions] = useState('1');
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
+  const [cleaningServer, setCleaningServer] = useState(false);
+
+  const handleServerCleanup = () => {
+    Alert.alert(
+      'Pembersihan Penyimpanan Server',
+      'Apakah Anda yakin ingin menghapus seluruh cover buku, foto profil, dan QR code usang di server?\n\nTindakan ini aman dan permanen.',
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Mulai Bersihkan',
+          style: 'destructive',
+          onPress: async () => {
+            setCleaningServer(true);
+            try {
+              const res = await settingsAPI.cleanup();
+              const { deleted_files_count, formatted_space_saved } = res.data.data;
+              Alert.alert(
+                'Sukses',
+                `Pembersihan selesai! Berhasil menghapus ${deleted_files_count} file tidak terpakai dan membebaskan ${formatted_space_saved} penyimpanan.`
+              );
+            } catch (err: any) {
+              Alert.alert(
+                'Gagal',
+                err.response?.data?.message || 'Terjadi kesalahan saat memproses pembersihan server.'
+              );
+            } finally {
+              setCleaningServer(false);
+            }
+          },
+        },
+      ]
+    );
+  };
 
   // App local configurations
   const [soundEffects, setSoundEffects] = useState(true);
@@ -280,6 +313,29 @@ export default function SettingsScreen({ navigation }: any) {
               </View>
               <Ionicons name="trash" size={20} color={colors.danger500} />
             </TouchableOpacity>
+
+            {isAdmin && (
+              <>
+                <View style={styles.divider} />
+                <TouchableOpacity
+                  style={styles.actionRow}
+                  onPress={handleServerCleanup}
+                  disabled={cleaningServer}
+                >
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text style={[styles.inputLabel, { color: colors.danger500 }]}>
+                      {cleaningServer ? 'Membersihkan Server...' : 'Bersihkan Media & QR Server'}
+                    </Text>
+                    <Text style={styles.inputDesc}>Hapus cover, profil, & QR usang di server</Text>
+                  </View>
+                  {cleaningServer ? (
+                    <ActivityIndicator size="small" color={colors.danger500} />
+                  ) : (
+                    <Ionicons name="cloud-offline-outline" size={20} color={colors.danger500} />
+                  )}
+                </TouchableOpacity>
+              </>
+            )}
 
             <View style={styles.divider} />
 

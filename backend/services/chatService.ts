@@ -117,10 +117,20 @@ const getConversations = async (userId: number): Promise<any[]> => {
       {
         association: 'participant_1',
         attributes: ['user_id', 'full_name', 'user_role', 'profile_photo_url', 'school_id', 'district_id', 'regency_id'],
+        include: [
+          { association: 'school', attributes: ['school_name'], required: false },
+          { association: 'district', attributes: ['district_name'], required: false },
+          { association: 'regency', attributes: ['regency_name'], required: false },
+        ]
       },
       {
         association: 'participant_2',
         attributes: ['user_id', 'full_name', 'user_role', 'profile_photo_url', 'school_id', 'district_id', 'regency_id'],
+        include: [
+          { association: 'school', attributes: ['school_name'], required: false },
+          { association: 'district', attributes: ['district_name'], required: false },
+          { association: 'regency', attributes: ['regency_name'], required: false },
+        ]
       },
     ],
     order: [['last_message_at', 'DESC']],
@@ -265,6 +275,11 @@ const getEligibleRecipients = async (user: Express.Request['user']): Promise<any
   return User.findAll({
     where,
     attributes: ['user_id', 'full_name', 'user_role', 'profile_photo_url', 'school_id', 'district_id', 'regency_id'],
+    include: [
+      { association: 'school', attributes: ['school_name'], required: false },
+      { association: 'district', attributes: ['district_name'], required: false },
+      { association: 'regency', attributes: ['regency_name'], required: false },
+    ],
     order: [['full_name', 'ASC']],
   });
 };

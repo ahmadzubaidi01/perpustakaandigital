@@ -182,12 +182,24 @@ export default function QrGeneratorScreen({ navigation }: any) {
     }
   };
 
-  const getRoleLabel = (role: string) => {
-    switch (role) {
+  const getDynamicRoleLabel = (u: any): string => {
+    if (!u) return '';
+    if (u.user_role === 'school_admin' && u.school?.school_name) {
+      return `Admin ${u.school.school_name}`;
+    }
+    if (u.user_role === 'regency_admin' && u.regency?.regency_name) {
+      return `Admin ${u.regency.regency_name}`;
+    }
+    if (u.user_role === 'district_admin' && u.district?.district_name) {
+      return `Admin Kecamatan ${u.district.district_name}`;
+    }
+    switch (u.user_role) {
       case 'super_admin': return 'Super Admin';
+      case 'regency_admin': return 'Admin Kabupaten';
+      case 'district_admin': return 'Admin Kecamatan';
       case 'school_admin': return 'Admin Sekolah';
       case 'student_member': return 'Siswa / Anggota';
-      default: return role;
+      default: return u.user_role || '';
     }
   };
 
@@ -234,7 +246,7 @@ export default function QrGeneratorScreen({ navigation }: any) {
                 <View style={styles.infoSection}>
                   <Text style={styles.cardName}>{user?.full_name}</Text>
                   <View style={styles.roleBadge}>
-                    <Text style={styles.roleText}>{getRoleLabel(user?.user_role || '')}</Text>
+                    <Text style={styles.roleText}>{getDynamicRoleLabel(user)}</Text>
                   </View>
                   {user?.student_id_number && <Text style={styles.cardSub}>NISN: {user.student_id_number}</Text>}
                   <Text style={styles.payloadText}>ID: USER-{user?.user_id}</Text>

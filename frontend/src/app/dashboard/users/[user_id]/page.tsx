@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ArrowLeft, Pencil, Loader2, Image as ImageIcon, Lock } from 'lucide-react';
-import { usersAPI, regionsAPI } from '@/lib/api';
+import { usersAPI, regionsAPI, getMediaUrl } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import toast from 'react-hot-toast';
 
@@ -30,6 +30,7 @@ export default function EditUserPage() {
   const [accountStatus, setAccountStatus] = useState('active');
   const [studentIdNumber, setStudentIdNumber] = useState('');
   const [className, setClassName] = useState('');
+  const [newPassword, setNewPassword] = useState('');
 
   // Regions Data
   const [regencies, setRegencies] = useState<any[]>([]);
@@ -96,7 +97,7 @@ export default function EditUserPage() {
         setClassName(u.class_name || '');
 
         if (u.profile_photo_url) {
-          setPhotoPreview(u.profile_photo_url.startsWith('http') ? u.profile_photo_url : `http://localhost:5000${u.profile_photo_url}`);
+          setPhotoPreview(getMediaUrl(u.profile_photo_url));
         }
 
         if (u.regency_id) setSelectedRegencyId(u.regency_id.toString());
@@ -215,6 +216,10 @@ export default function EditUserPage() {
       formData.append('user_role', userRole);
       formData.append('account_status', accountStatus);
       formData.append('phone_number', phoneNumber ? phoneNumber.trim() : '');
+      
+      if (currentUser?.user_role === 'super_admin' && newPassword.trim() !== '') {
+        formData.append('password', newPassword.trim());
+      }
       
       if (userRole === 'student_member') {
         formData.append('student_id_number', studentIdNumber.trim());
@@ -363,6 +368,24 @@ export default function EditUserPage() {
               <option value="suspended">Suspended</option>
             </Select>
           </div>
+
+          {/* Ubah Kata Sandi (Super Admin Only) */}
+          {currentUser?.user_role === 'super_admin' && (
+            <div className="space-y-4 pt-4 border-t border-border">
+              <h4 className="text-sm font-bold uppercase tracking-wider text-[var(--heading)]">Ubah Kata Sandi</h4>
+              <p className="text-xs text-[var(--text-muted)]">Kosongkan jika tidak ingin mengubah kata sandi pengguna ini.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Input
+                  label="Kata Sandi Baru"
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Masukkan kata sandi baru"
+                  helperText="Sandi baru harus minimal 8 karakter."
+                />
+              </div>
+            </div>
+          )}
 
           {/* Regional Settings */}
           {userRole && userRole !== 'super_admin' && (

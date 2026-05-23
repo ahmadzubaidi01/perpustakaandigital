@@ -167,45 +167,18 @@ const sendLateWarning = async (
 };
 
 /**
- * Send book availability notification.
- */
-const sendAvailabilityNotice = async (
-  userId: number,
-  bookTitle: string,
-  email?: string
-): Promise<void> => {
-  await createInAppNotification({
-    user_id: userId,
-    notification_title: 'Book Now Available',
-    notification_message: `The book "${bookTitle}" you reserved is now available. Please pick it up within 48 hours.`,
-    notification_type: NotificationType.AVAILABILITY_NOTICE,
-  });
-
-  if (email) {
-    sendEmailNotification(
-      email,
-      `Book Available - ${bookTitle}`,
-      `
-        <h2>Book Now Available</h2>
-        <p>The book <strong>"${bookTitle}"</strong> you reserved is now available for pickup.</p>
-        <p>Please collect it within 48 hours before the reservation expires.</p>
-      `
-    ).catch((err: any) => logger.error('Failed to send book availability email in background', { error: err.message }));
-  }
-};
-
-/**
  * Send borrowing event notification (borrow approved, etc.).
  */
 const sendBorrowingEvent = async (
   userId: number,
   bookTitle: string,
-  eventType: 'approved' | 'created' | 'quick_borrow'
+  eventType: 'approved' | 'created' | 'quick_borrow' | 'extended'
 ): Promise<void> => {
   const messages: Record<string, string> = {
     approved: `Peminjaman buku "${bookTitle}" telah disetujui. Silakan ambil buku di perpustakaan.`,
     created: `Permintaan peminjaman buku "${bookTitle}" berhasil dibuat. Menunggu persetujuan admin.`,
     quick_borrow: `Buku "${bookTitle}" berhasil dipinjamkan kepada Anda oleh admin.`,
+    extended: `Peminjaman buku "${bookTitle}" telah diperpanjang.`,
   };
 
   await createInAppNotification({
@@ -221,7 +194,7 @@ const sendBorrowingEvent = async (
     emitNotification(userId, {
       type: 'borrowing_event',
       title: 'Peminjaman Buku',
-      message: messages[eventType],
+      message: messages[eventType] || `Update peminjaman: ${bookTitle}`,
       book_title: bookTitle,
     });
   } catch { /* Socket not initialized yet */ }
@@ -458,7 +431,6 @@ export {
   sendEmailNotification,
   sendDueReminder,
   sendLateWarning,
-  sendAvailabilityNotice,
   sendBorrowingEvent,
   sendReturnEvent,
   sendStockAnomalyAlert,

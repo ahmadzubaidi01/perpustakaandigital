@@ -6,7 +6,7 @@ import { Inbox, ChevronUp, ChevronDown, ArrowUpDown } from 'lucide-react';
 
 export interface DataTableColumn {
   key: string;
-  label: string;
+  label: React.ReactNode;
   render?: (value: any, row: any, index: number) => React.ReactNode;
   headerClassName?: string;
   cellClassName?: string;
@@ -168,9 +168,22 @@ export const DataTable: React.FC<DataTableProps> = ({
             )}
           >
             <div className="space-y-3">
+              {/* If checkbox exists, render it at the top of the card */}
+              {columns.some(col => col.key === 'checkbox') && (
+                <div className="flex items-center gap-2 pb-2 border-b border-border/50">
+                  {columns.find(col => col.key === 'checkbox')?.render?.(row.checkbox, row, idx)}
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Pilih Transaksi</span>
+                </div>
+              )}
               {columns.map((col, cIdx) => {
+                // Skip rendering checkbox again in the list
+                if (col.key === 'checkbox') return null;
+
                 const renderedVal = col.render ? col.render(row[col.key], row, idx) : (row[col.key] ?? '-');
-                const isPrimary = cIdx === 0;
+
+                // Determine primary content column
+                const primaryCol = columns.find(c => c.key !== 'checkbox' && c.key !== 'actions' && c.key !== 'number') || columns[0];
+                const isPrimary = col.key === primaryCol?.key;
 
                 if (isPrimary) {
                   return (
@@ -185,8 +198,8 @@ export const DataTable: React.FC<DataTableProps> = ({
                   );
                 }
 
-                // If it is the last item and matches an action set, render it full width at the bottom
-                const isActions = col.key.toLowerCase().includes('action') || col.label.toLowerCase().includes('aksi');
+                // If it is the actions column, render it full width at the bottom
+                const isActions = col.key.toLowerCase().includes('action') || (typeof col.label === 'string' && col.label.toLowerCase().includes('aksi'));
                 if (isActions) {
                   return (
                     <div key={col.key} className="pt-2 border-t border-border mt-3 flex justify-end gap-2">

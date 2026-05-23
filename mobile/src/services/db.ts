@@ -10,6 +10,7 @@ export interface CachedBook {
   book_status: string;
   available_stock: number;
   total_stock: number;
+  cover_image_url?: string | null;
   created_at?: string;
 }
 
@@ -65,9 +66,18 @@ export const initDatabase = (): void => {
         book_status TEXT,
         available_stock INTEGER,
         total_stock INTEGER,
+        cover_image_url TEXT,
         created_at TEXT
       );
     `);
+
+    // Self-healing migration for existing databases
+    try {
+      db.execSync('ALTER TABLE books ADD COLUMN cover_image_url TEXT;');
+      console.log('[SQLite] Migration successful: added cover_image_url column to books table');
+    } catch (e) {
+      // Column already exists, ignore
+    }
 
     // Create offline scan queue table
     db.execSync(`
@@ -115,14 +125,15 @@ export const cacheBooks = (books: CachedBook[]): void => {
     // Insert new books
     for (const book of books) {
       db.runSync(
-        `INSERT INTO books (book_id, book_title, author_name, book_status, available_stock, total_stock, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?);`,
+        `INSERT INTO books (book_id, book_title, author_name, book_status, available_stock, total_stock, cover_image_url, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
         book.book_id,
         book.book_title,
         book.author_name || '',
         book.book_status || 'available',
         book.available_stock || 0,
         book.total_stock || 0,
+        book.cover_image_url || null,
         book.created_at || new Date().toISOString()
       );
     }

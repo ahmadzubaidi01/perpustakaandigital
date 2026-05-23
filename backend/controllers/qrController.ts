@@ -1,7 +1,9 @@
 import { Request, Response } from 'express';
 import { Op, Transaction } from 'sequelize';
-import { sequelize, BookQr, Book, QrScanLog, Borrowing } from '../models';
-import { QrStatus, ScanType, AuditActionType, TABLE_NAMES, UserRole, BorrowingStatus } from '../config/constants';
+import fs from 'fs';
+import path from 'path';
+import { sequelize, BookQr, Book, QrScanLog, Borrowing, BorrowingSetting } from '../models';
+import { QrStatus, ScanType, AuditActionType, TABLE_NAMES, UserRole, BorrowingStatus, PenaltyStatus } from '../config/constants';
 import apiResponse from '../utils/apiResponse';
 import { asyncHandler } from '../middleware/errorHandler';
 import { generateBookQrCodes, validateQrPayload, generateQrDataUrl } from '../services/qrService';
@@ -9,6 +11,8 @@ import { createAuditLog, buildAuditFromRequest } from '../services/auditService'
 import { parsePaginationParams, buildPaginationResult } from '../utils/pagination';
 import { buildRegionalFilter } from '../middleware/rbac';
 import { syncBookStock } from '../services/stockSyncService';
+import { calculateLatePenalty, isPastDue } from '../utils/helpers';
+import env from '../config/environment';
 
 const listBookQrs = asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const pagination = parsePaginationParams(req, 'created_at', ['created_at', 'qr_serial_number', 'qr_status']);
@@ -108,6 +112,83 @@ const scanQr = asyncHandler(async (req: Request, res: Response): Promise<void> =
     include: [{ association: 'book', include: [{ association: 'school', attributes: ['school_id', 'school_name'] }] }],
   });
   if (!bookQr) { apiResponse.notFound(res, 'QR code not found in system'); return; }
+
+  // Check if this physical book is currently borrowed by the same user scanning it
+  const activeBorrowing = await Borrowing.findOne({
+    where: {
+      book_qr_id: bookQr.book_qr_id,
+      user_id: req.user!.user_id,
+      borrowing_status: { [Op.in]: [BorrowingStatus.BORROWED, BorrowingStatus.LATE] }
+    }
+  });
+
+  if (activeBorrowing) {
+    // Automatically process return!
+    const result = await sequelize.transaction(async (t: Transaction) => {
+      const now = new Date();
+      let penaltyAmount = parseFloat(String(activeBorrowing.late_penalty_amount || 0));
+      let penaltyStatus = activeBorrowing.penalty_status;
+
+      if (activeBorrowing.due_date && isPastDue(activeBorrowing.due_date)) {
+        const settings = await BorrowingSetting.findOne({ where: { school_id: (bookQr as any).book?.school_id }, transaction: t });
+        const rate = settings ? parseFloat(String(settings.penalty_rate_per_day)) : env.DEFAULT_PENALTY_RATE_PER_DAY;
+        const additionalPenalty = calculateLatePenalty(activeBorrowing.due_date, now, rate);
+        penaltyAmount += additionalPenalty;
+        if (penaltyAmount > 0 && penaltyStatus !== PenaltyStatus.PAID) {
+          penaltyStatus = PenaltyStatus.UNPAID;
+        }
+      }
+
+      await activeBorrowing.update({
+        borrowing_status: BorrowingStatus.RETURNED,
+        returned_at: now,
+        late_penalty_amount: penaltyAmount,
+        penalty_status: penaltyStatus,
+      }, { transaction: t });
+
+      await bookQr.update({ qr_status: QrStatus.ACTIVE }, { transaction: t });
+
+      await syncBookStock(bookQr.book_id, t);
+
+      return {
+        borrowing: activeBorrowing,
+        penalty_amount: penaltyAmount,
+      };
+    });
+
+    // Create return scan log
+    await QrScanLog.create({
+      book_qr_id: bookQr.book_qr_id,
+      scanned_by_user_id: req.user!.user_id,
+      scan_type: ScanType.RETURNING,
+      latitude: latitude || null,
+      longitude: longitude || null,
+      device_name: req.deviceInfo?.device_name || null,
+      device_type: req.deviceInfo?.device_type || null,
+      device_os: req.deviceInfo?.device_os || null,
+      browser_name: req.deviceInfo?.browser_name || null,
+      browser_version: req.deviceInfo?.browser_version || null,
+      scanned_at: new Date(),
+    });
+
+    // Create audit log
+    await createAuditLog(buildAuditFromRequest(req, AuditActionType.RETURN, TABLE_NAMES.BORROWINGS, result.borrowing.borrowing_id));
+
+    // Send return event notification
+    try {
+      const { sendReturnEvent } = require('../services/notificationService');
+      await sendReturnEvent(req.user!.user_id, (bookQr as any).book?.book_title || 'Buku', result.penalty_amount);
+    } catch { /* ignored */ }
+
+    apiResponse.success(res, 'Buku berhasil dikembalikan secara otomatis', {
+      book_qr: bookQr,
+      book: (bookQr as any).book,
+      scan_type: 'auto_return',
+      borrowing: result.borrowing,
+      penalty_amount: result.penalty_amount,
+    });
+    return;
+  }
 
   let wasReactivated = false;
   if (bookQr.qr_status !== QrStatus.ACTIVE) {
@@ -237,7 +318,6 @@ const deleteQrCode = asyncHandler(async (req: Request, res: Response): Promise<v
       throw Object.assign(new Error('Associated book not found'), { statusCode: 404 });
     }
 
-    // 3. Update all active borrowings associated with this QR to returned status
     const activeBorrowings = await Borrowing.findAll({
       where: {
         book_qr_id: qr.book_qr_id,
@@ -247,12 +327,14 @@ const deleteQrCode = asyncHandler(async (req: Request, res: Response): Promise<v
             BorrowingStatus.APPROVED,
             BorrowingStatus.BORROWED,
             BorrowingStatus.LATE,
-            BorrowingStatus.RESERVED,
           ],
         },
       },
       transaction: t,
     });
+
+    // 3. Update all active borrowings associated with this QR to returned status
+
 
     const now = new Date();
     for (const borrowing of activeBorrowings) {
@@ -273,6 +355,18 @@ const deleteQrCode = asyncHandler(async (req: Request, res: Response): Promise<v
 
     return { qr, book };
   });
+
+  // Delete the physical QR image file from disk after successful deletion in db
+  if (result.qr && result.qr.qr_image_url) {
+    const oldPath = path.resolve(__dirname, '..', result.qr.qr_image_url.replace(/^\//, ''));
+    if (fs.existsSync(oldPath)) {
+      try {
+        fs.unlinkSync(oldPath);
+      } catch (err) {
+        // silent
+      }
+    }
+  }
 
   await createAuditLog(buildAuditFromRequest(req, AuditActionType.DELETE, TABLE_NAMES.BOOK_QR, result.qr.book_qr_id));
   apiResponse.success(res, 'Book QR code deleted successfully and associated borrowings closed');

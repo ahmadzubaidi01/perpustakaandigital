@@ -63,6 +63,10 @@ export default function CreateBookPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        toast.error('Ukuran file foto maksimal 2MB');
+        return;
+      }
       setCoverFile(file);
       setPreview(URL.createObjectURL(file));
     }
@@ -137,7 +141,7 @@ export default function CreateBookPage() {
                 <Upload size={16} /> Pilih Gambar
                 <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleFileChange} className="hidden" />
               </label>
-              <p className="text-xs mt-2 text-muted-foreground">Format: JPG, PNG, WebP. Maks: 5MB</p>
+              <p className="text-xs mt-2 text-muted-foreground">Format: JPG, PNG, WebP. Maks: 2MB</p>
             </div>
           </div>
         </Card>

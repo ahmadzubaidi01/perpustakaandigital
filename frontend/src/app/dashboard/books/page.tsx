@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { Search, Plus, Book } from 'lucide-react';
-import { booksAPI, categoriesAPI } from '@/lib/api';
+import { booksAPI, categoriesAPI, getMediaUrl } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import toast from 'react-hot-toast';
 
@@ -155,7 +155,6 @@ export default function BooksPage() {
             <option value="">Semua Status</option>
             <option value="available">Tersedia</option>
             <option value="borrowed">Dipinjam</option>
-            <option value="reserved">Dipesan</option>
             <option value="maintenance">Perawatan</option>
           </Select>
           <div className="flex gap-1">
@@ -198,11 +197,7 @@ export default function BooksPage() {
                   >
                     {book.cover_image_url ? (
                       <img
-                        src={
-                          book.cover_image_url.startsWith('http')
-                            ? book.cover_image_url
-                            : `http://localhost:5000${book.cover_image_url.startsWith('/') ? '' : '/'}${book.cover_image_url}`
-                        }
+                        src={getMediaUrl(book.cover_image_url)}
                         alt={book.book_title}
                         className="w-full h-full object-cover transition-all duration-500 group-hover:scale-110"
                       />

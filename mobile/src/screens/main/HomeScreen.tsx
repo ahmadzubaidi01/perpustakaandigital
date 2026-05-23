@@ -1,25 +1,38 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, ActivityIndicator, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../store/authStore';
-import { booksAPI, borrowingsAPI, dashboardAPI } from '../../services/api';
+import api, { booksAPI, borrowingsAPI, dashboardAPI } from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
+import { checkOnlineStatus } from '../../services/syncService';
+import { useNotificationStore } from '../../store/notificationStore';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 
 export default function HomeScreen({ navigation }: any) {
   const { user } = useAuthStore();
   const { colors, isDark } = useTheme();
   const styles = getStyles(colors);
+  const { refreshTrigger } = useNotificationStore();
   
   const [recentBooks, setRecentBooks] = useState<any[]>([]);
   const [activeBorrowings, setActiveBorrowings] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
   
   // Admin stats states
   const isAdmin = user?.user_role && user.user_role !== 'student_member';
   const [adminStats, setAdminStats] = useState<any>(null);
   const [loadingStats, setLoadingStats] = useState(false);
+
+  const checkConnection = async () => {
+    try {
+      const online = await checkOnlineStatus();
+      setIsOnline(online);
+    } catch {
+      setIsOnline(false);
+    }
+  };
 
   const fetchAdminStats = async () => {
     if (!isAdmin) return;
@@ -86,6 +99,7 @@ export default function HomeScreen({ navigation }: any) {
 
   const fetchData = async () => {
     try {
+      await checkConnection();
       const [booksRes, borrowRes] = await Promise.all([
         booksAPI.list({ limit: 4, sort_by: 'created_at', sort_order: 'DESC' }),
         borrowingsAPI.list({ limit: 10 }),
@@ -93,7 +107,7 @@ export default function HomeScreen({ navigation }: any) {
       setRecentBooks(booksRes.data.data || []);
       
       const allBorrowings = borrowRes.data.data || [];
-      const activeStates = ['pending', 'approved', 'borrowed', 'reserved', 'late'];
+      const activeStates = ['pending', 'approved', 'borrowed', 'late'];
       const filteredActive = allBorrowings.filter((b: any) => {
         let status = b.borrowing_status;
         if (status === 'borrowed' && b.due_date && new Date(b.due_date) < new Date()) {
@@ -109,7 +123,14 @@ export default function HomeScreen({ navigation }: any) {
     } catch {}
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    fetchData();
+  }, [refreshTrigger]);
+
+  useEffect(() => {
+    const interval = setInterval(checkConnection, 10000); // Poll connection every 10s
+    return () => clearInterval(interval);
+  }, []);
 
   const onRefresh = async () => { 
     setRefreshing(true); 
@@ -127,7 +148,7 @@ export default function HomeScreen({ navigation }: any) {
   ];
 
   return (
-    <SafeAreaView style={styles.safeContainer}>
+    <View style={styles.safeContainer}>
       <ScrollView style={styles.container} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary400} />}>
         {/* Welcome */}
         <View style={styles.welcomeCard}>
@@ -136,6 +157,12 @@ export default function HomeScreen({ navigation }: any) {
             <View style={{ flex: 1 }}>
               <Text style={styles.welcomeTitle}>Halo, {user?.full_name?.split(' ')[0]}! 👋</Text>
               <Text style={styles.welcomeSub}>{user?.school?.school_name || 'Perpustakaan Digital'}</Text>
+            </View>
+            <View style={[styles.statusBadge, { backgroundColor: isOnline ? colors.success500 + '15' : colors.danger500 + '15', borderColor: isOnline ? colors.success500 + '30' : colors.danger500 + '30' }]}>
+              <View style={[styles.statusDot, { backgroundColor: isOnline ? colors.success500 : colors.danger500 }]} />
+              <Text style={[styles.statusText, { color: isOnline ? colors.success500 : colors.danger500 }]}>
+                {isOnline ? 'Online' : 'Offline'}
+              </Text>
             </View>
           </View>
         </View>
@@ -204,11 +231,7 @@ export default function HomeScreen({ navigation }: any) {
                   badgeColor = colors.info500;
                   badgeBg = colors.info500 + '20';
                   break;
-                case 'reserved':
-                  badgeLabel = 'Dipesan';
-                  badgeColor = colors.accent500;
-                  badgeBg = colors.accent500 + '20';
-                  break;
+
                 case 'borrowed':
                 default:
                   badgeLabel = 'Dipinjam';
@@ -246,19 +269,39 @@ export default function HomeScreen({ navigation }: any) {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Buku Terbaru</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {recentBooks.map((book, idx) => (
-              <TouchableOpacity key={`book-${book.book_id || idx}-${idx}`} style={styles.bookCard} activeOpacity={0.8} onPress={() => navigation.navigate('BookDetails', { bookId: book.book_id })}>
-                <View style={styles.bookCover}><Ionicons name="book" size={28} color={colors.surface500} /></View>
-                <Text style={styles.bookTitle} numberOfLines={2}>{book.book_title}</Text>
-                <Text style={styles.bookAuthor} numberOfLines={1}>{book.author_name}</Text>
-              </TouchableOpacity>
-            ))}
+            {recentBooks.map((book, idx) => {
+              const showImage = !!book.cover_image_url;
+              const coverUri = showImage
+                ? (book.cover_image_url.startsWith('http')
+                    ? book.cover_image_url
+                    : `${(api.defaults.baseURL || '').replace('/api', '')}${book.cover_image_url}`)
+                : null;
+
+              return (
+                <TouchableOpacity 
+                  key={`book-${book.book_id || idx}-${idx}`} 
+                  style={styles.bookCard} 
+                  activeOpacity={0.8} 
+                  onPress={() => navigation.navigate('BookDetails', { bookId: book.book_id })}
+                >
+                  <View style={styles.bookCover}>
+                    {coverUri ? (
+                      <Image source={{ uri: coverUri }} style={styles.bookCoverImage} />
+                    ) : (
+                      <Ionicons name="book" size={28} color={colors.surface500} />
+                    )}
+                  </View>
+                  <Text style={styles.bookTitle} numberOfLines={2}>{book.book_title}</Text>
+                  <Text style={styles.bookAuthor} numberOfLines={1}>{book.author_name}</Text>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         </View>
 
         <View style={{ height: Spacing.xxxl }} />
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -289,7 +332,8 @@ const getStyles = (colors: any) =>
     emptyState: { alignItems: 'center', paddingVertical: Spacing.xxl, backgroundColor: colors.surface800, borderRadius: BorderRadius.xl, borderWidth: 1, borderColor: colors.surface600, borderStyle: 'dashed' },
     emptyText: { fontSize: FontSize.sm, color: colors.textMuted, marginTop: Spacing.sm },
     bookCard: { width: 120, marginRight: Spacing.md },
-    bookCover: { width: 120, height: 160, borderRadius: BorderRadius.lg, backgroundColor: colors.surface800, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm, borderWidth: 1, borderColor: colors.surface600 },
+    bookCover: { width: 120, height: 160, borderRadius: BorderRadius.lg, backgroundColor: colors.surface800, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm, borderWidth: 1, borderColor: colors.surface600, overflow: 'hidden' },
+    bookCoverImage: { width: '100%', height: '100%', resizeMode: 'cover' },
     bookTitle: { fontSize: FontSize.sm, fontWeight: '600', color: colors.text },
     bookAuthor: { fontSize: FontSize.xs, color: colors.textMuted, marginTop: 2 },
     
@@ -304,4 +348,22 @@ const getStyles = (colors: any) =>
     managementCard: { width: '48%', backgroundColor: colors.surface800, borderRadius: BorderRadius.lg, padding: Spacing.md, alignItems: 'center', borderWidth: 1, borderColor: colors.surface600, gap: 8 },
     managementIcon: { width: 44, height: 44, borderRadius: BorderRadius.md, alignItems: 'center', justifyContent: 'center' },
     managementLabel: { fontSize: FontSize.xs, fontWeight: '700', color: colors.text, textAlign: 'center' },
+    statusBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: Spacing.sm,
+      paddingVertical: 4,
+      borderRadius: BorderRadius.full,
+      borderWidth: 1,
+    },
+    statusDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+    },
+    statusText: {
+      fontSize: FontSize.xs,
+      fontWeight: '700',
+    },
   });

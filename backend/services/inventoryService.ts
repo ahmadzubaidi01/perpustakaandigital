@@ -1,6 +1,6 @@
 import { Op, Transaction } from 'sequelize';
-import { sequelize, Book, BookQr, Borrowing, User, School, District } from '../models';
-import { QrStatus, BorrowingStatus, AuditActionType, TABLE_NAMES, UserRole } from '../config/constants';
+import { sequelize, Book, BookQr, Borrowing, User, School, District, BorrowingSetting } from '../models';
+import { QrStatus, BorrowingStatus, AuditActionType, TABLE_NAMES, UserRole, PenaltyStatus } from '../config/constants';
 import { createAuditLog } from './auditService';
 import { createInAppNotification } from './notificationService';
 import { syncBookStock } from './stockSyncService';
@@ -21,6 +21,10 @@ const markBookQrStatus = async (
   notes: string | null,
   adminUser: Express.Request['user']
 ): Promise<BookQr> => {
+  if (newStatus === QrStatus.BORROWED) {
+    throw Object.assign(new Error('Status tidak bisa diubah ke "Dipinjam" secara manual. Harus melalui proses scan peminjaman.'), { statusCode: 400 });
+  }
+
   const result = await sequelize.transaction(async (t: Transaction) => {
     const qr = await BookQr.findByPk(bookQrId, {
       lock: Transaction.LOCK.UPDATE,
@@ -33,9 +37,9 @@ const markBookQrStatus = async (
     const oldStatus = qr.qr_status;
     await qr.update({ qr_status: newStatus, notes: notes || qr.notes }, { transaction: t });
 
-    // If status is updated to something other than ACTIVE or BORROWED (inactive, damaged, lost, maintenance),
-    // automatically close any active borrowings for this copy
-    if (newStatus !== QrStatus.ACTIVE && newStatus !== QrStatus.BORROWED) {
+    // If status is updated to something other than BORROWED (active/available, inactive, damaged, lost, maintenance),
+    // automatically close any active borrowings for this copy as returned
+    if ((newStatus as any) !== QrStatus.BORROWED) {
       const activeBorrowings = await Borrowing.findAll({
         where: {
           book_qr_id: bookQrId,
@@ -45,21 +49,46 @@ const markBookQrStatus = async (
               BorrowingStatus.APPROVED,
               BorrowingStatus.LATE,
               BorrowingStatus.PENDING,
-              BorrowingStatus.RESERVED,
             ],
           },
         },
         transaction: t,
       });
 
+      const book = (qr as any).book;
+
       for (const borrowing of activeBorrowings) {
+        let penaltyAmount = parseFloat(String(borrowing.late_penalty_amount || 0));
+        let penaltyStatus = borrowing.penalty_status;
+        const now = new Date();
+
+        if (borrowing.due_date && borrowing.due_date.getTime() < now.getTime()) {
+          const settings = await BorrowingSetting.findOne({ where: { school_id: book?.school_id }, transaction: t });
+          const rate = settings ? parseFloat(String(settings.penalty_rate_per_day)) : 1000;
+          const msPerDay = 24 * 60 * 60 * 1000;
+          const daysLate = Math.max(0, Math.ceil((now.getTime() - borrowing.due_date.getTime()) / msPerDay));
+          const additionalPenalty = parseFloat((daysLate * rate).toFixed(2));
+          penaltyAmount += additionalPenalty;
+          if (penaltyAmount > 0 && penaltyStatus !== PenaltyStatus.PAID) {
+            penaltyStatus = PenaltyStatus.UNPAID;
+          }
+        }
+
         await borrowing.update(
           {
             borrowing_status: BorrowingStatus.RETURNED,
-            returned_at: new Date(),
+            returned_at: now,
+            late_penalty_amount: penaltyAmount,
+            penalty_status: penaltyStatus,
           },
           { transaction: t }
         );
+
+        // Send return event notification to the student so their screen refreshes in real-time
+        try {
+          const { sendReturnEvent } = require('./notificationService');
+          await sendReturnEvent(borrowing.user_id, book?.book_title || 'Buku', penaltyAmount);
+        } catch { /* ignored */ }
       }
     }
 

@@ -8,6 +8,7 @@ interface NotificationState {
   chatUnreadCount: number; // Unread chats count only
   hasUnread: boolean;
   activeConversationId: number | null;
+  refreshTrigger: number;
   setUnreadCount: (count: number) => void;
   setChatUnreadCount: (count: number) => void;
   incrementUnreadCount: () => void;
@@ -15,6 +16,7 @@ interface NotificationState {
   clearUnread: () => void;
   fetchUnreadCount: () => Promise<void>;
   setActiveConversationId: (id: number | null) => void;
+  triggerRefresh: () => void;
 }
 
 export const useNotificationStore = create<NotificationState>((set, get) => ({
@@ -23,27 +25,43 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   chatUnreadCount: 0,
   hasUnread: false,
   activeConversationId: null,
+  refreshTrigger: 0,
+  triggerRefresh: () => set((state) => ({ refreshTrigger: state.refreshTrigger + 1 })),
 
   setUnreadCount: (systemUnreadCount) => {
-    const total = systemUnreadCount + get().chatUnreadCount;
+    const user = useAuthStore.getState().user;
+    const isStudent = user?.user_role === 'student_member';
+    const total = isStudent ? systemUnreadCount : (systemUnreadCount + get().chatUnreadCount);
     set({ systemUnreadCount, unreadCount: total, hasUnread: total > 0 });
   },
 
   setChatUnreadCount: (chatUnreadCount) => {
-    const total = get().systemUnreadCount + chatUnreadCount;
-    set({ chatUnreadCount, unreadCount: total, hasUnread: total > 0 });
+    set({ chatUnreadCount });
+    const user = useAuthStore.getState().user;
+    const isStudent = user?.user_role === 'student_member';
+    if (!isStudent) {
+      const total = get().systemUnreadCount + chatUnreadCount;
+      set({ unreadCount: total, hasUnread: total > 0 });
+    }
   },
   
   incrementUnreadCount: () => {
     const newSystem = get().systemUnreadCount + 1;
-    const total = newSystem + get().chatUnreadCount;
+    const user = useAuthStore.getState().user;
+    const isStudent = user?.user_role === 'student_member';
+    const total = isStudent ? newSystem : (newSystem + get().chatUnreadCount);
     set({ systemUnreadCount: newSystem, unreadCount: total, hasUnread: total > 0 });
   },
 
   incrementChatUnreadCount: () => {
     const newChat = get().chatUnreadCount + 1;
-    const total = get().systemUnreadCount + newChat;
-    set({ chatUnreadCount: newChat, unreadCount: total, hasUnread: total > 0 });
+    set({ chatUnreadCount: newChat });
+    const user = useAuthStore.getState().user;
+    const isStudent = user?.user_role === 'student_member';
+    if (!isStudent) {
+      const total = get().systemUnreadCount + newChat;
+      set({ unreadCount: total, hasUnread: total > 0 });
+    }
   },
 
   setActiveConversationId: (activeConversationId) => set({ activeConversationId }),
@@ -55,8 +73,11 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       console.warn('[NotificationStore] Failed to mark all read in backend:', e);
     }
     // Only clear system notifications
+    const user = useAuthStore.getState().user;
+    const isStudent = user?.user_role === 'student_member';
     const chatUnread = get().chatUnreadCount;
-    set({ systemUnreadCount: 0, unreadCount: chatUnread, hasUnread: chatUnread > 0 });
+    const total = isStudent ? 0 : chatUnread;
+    set({ systemUnreadCount: 0, unreadCount: total, hasUnread: total > 0 });
   },
 
   fetchUnreadCount: async () => {

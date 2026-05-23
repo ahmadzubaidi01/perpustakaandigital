@@ -84,6 +84,27 @@ const roleLabels: Record<string, string> = {
   student_member: 'Siswa',
 };
 
+const getDynamicRoleLabel = (u: any): string => {
+  if (!u) return '';
+  if (u.user_role === 'school_admin' && u.school?.school_name) {
+    return `Admin ${u.school.school_name}`;
+  }
+  if (u.user_role === 'regency_admin' && u.regency?.regency_name) {
+    return `Admin ${u.regency.regency_name}`;
+  }
+  if (u.user_role === 'district_admin' && u.district?.district_name) {
+    return `Admin Kecamatan ${u.district.district_name}`;
+  }
+  const roleLabels: Record<string, string> = {
+    super_admin: 'Super Admin',
+    regency_admin: 'Admin Kabupaten',
+    district_admin: 'Admin Kecamatan',
+    school_admin: 'Admin Sekolah',
+    student_member: 'Siswa',
+  };
+  return roleLabels[u.user_role] || u.user_role || '';
+};
+
 /* ═══════════════════════════════════════════════════
    Sidebar Component
    ═══════════════════════════════════════════════════ */
@@ -151,7 +172,7 @@ function SidebarContent({ isMobile = false }: { isMobile?: boolean }) {
               </p>
               <span className="inline-flex items-center gap-1.5 mt-1 text-[10px] font-semibold text-primary">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                {roleLabels[user.user_role] || 'User'}
+                {getDynamicRoleLabel(user)}
               </span>
             </div>
           </div>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { Button } from './Button';
 
 export interface PaginationProps {
@@ -17,6 +17,18 @@ export const Pagination: React.FC<PaginationProps> = ({
 
   return (
     <div className="flex items-center justify-center gap-2 mt-6">
+      {/* Lompat ke halaman awal */}
+      <Button
+        variant="outline"
+        size="icon"
+        onClick={() => onPageChange(1)}
+        disabled={page === 1}
+        aria-label="Halaman pertama"
+        title="Halaman Pertama"
+      >
+        <ChevronsLeft size={16} />
+      </Button>
+
       <Button
         variant="outline"
         size="icon"
@@ -39,6 +51,18 @@ export const Pagination: React.FC<PaginationProps> = ({
         aria-label="Halaman berikutnya"
       >
         <ChevronRight size={16} />
+      </Button>
+
+      {/* Lompat ke halaman akhir */}
+      <Button
+        variant="outline"
+        size="icon"
+        onClick={() => onPageChange(totalPages)}
+        disabled={page === totalPages}
+        aria-label="Halaman terakhir"
+        title="Halaman Terakhir"
+      >
+        <ChevronsRight size={16} />
       </Button>
     </div>
   );

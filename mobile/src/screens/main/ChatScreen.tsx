@@ -147,7 +147,23 @@ export default function ChatScreen({ navigation }: any) {
     return conv.participant_1;
   };
 
-  const getRoleLabel = (role: string) => {
+  const getRoleLabel = (u: any) => {
+    if (!u) return '';
+    const role = typeof u === 'string' ? u : u.user_role;
+    const schoolName = typeof u === 'string' ? null : u.school?.school_name;
+    const regencyName = typeof u === 'string' ? null : u.regency?.regency_name;
+    const districtName = typeof u === 'string' ? null : u.district?.district_name;
+
+    if (role === 'school_admin' && schoolName) {
+      return `Admin ${schoolName}`;
+    }
+    if (role === 'regency_admin' && regencyName) {
+      return `Admin ${regencyName}`;
+    }
+    if (role === 'district_admin' && districtName) {
+      return `Admin Kecamatan ${districtName}`;
+    }
+
     switch (role) {
       case 'super_admin': return 'Super Admin';
       case 'school_admin': return 'Admin Sekolah';
@@ -187,7 +203,7 @@ export default function ChatScreen({ navigation }: any) {
           </View>
 
           <View style={s.roleTag}>
-            <Text style={s.roleTagText}>{getRoleLabel(other.user_role)}</Text>
+            <Text style={s.roleTagText}>{getRoleLabel(other)}</Text>
           </View>
 
           {lastMsg && (
@@ -300,7 +316,7 @@ export default function ChatScreen({ navigation }: any) {
                   <View style={{ flex: 1, gap: 2 }}>
                     <Text style={s.recipientName}>{item.full_name}</Text>
                     <View style={s.roleTag}>
-                      <Text style={s.roleTagText}>{getRoleLabel(item.user_role)}</Text>
+                      <Text style={s.roleTagText}>{getRoleLabel(item)}</Text>
                     </View>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={colors.surface400} />

@@ -30,6 +30,9 @@ export default function SocketNotificationListener() {
               // Increment UI Badge
               incrementUnreadCount();
 
+              // Trigger global UI screens to refresh
+              useNotificationStore.getState().triggerRefresh();
+
               // Push Android Tray Notification
               const title = notification.notification_title || notification.title || 'Pemberitahuan Baru';
               const body = notification.notification_message || notification.message || 'Ada pembaruan sistem untuk Anda.';

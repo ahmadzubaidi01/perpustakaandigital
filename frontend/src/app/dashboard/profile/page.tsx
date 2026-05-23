@@ -76,12 +76,25 @@ export default function ProfilePage() {
     }
   };
 
-  const roleLabels: Record<string, string> = {
-    super_admin: 'Super Admin',
-    regency_admin: 'Admin Kabupaten',
-    district_admin: 'Admin Kecamatan',
-    school_admin: 'Admin Sekolah',
-    student_member: 'Anggota Siswa',
+  const getDynamicRoleLabel = (u: any): string => {
+    if (!u) return '';
+    if (u.user_role === 'school_admin' && u.school?.school_name) {
+      return `Admin ${u.school.school_name}`;
+    }
+    if (u.user_role === 'regency_admin' && u.regency?.regency_name) {
+      return `Admin ${u.regency.regency_name}`;
+    }
+    if (u.user_role === 'district_admin' && u.district?.district_name) {
+      return `Admin Kecamatan ${u.district.district_name}`;
+    }
+    const roleLabelsMap: Record<string, string> = {
+      super_admin: 'Super Admin',
+      regency_admin: 'Admin Kabupaten',
+      district_admin: 'Admin Kecamatan',
+      school_admin: 'Admin Sekolah',
+      student_member: 'Anggota Siswa',
+    };
+    return roleLabelsMap[u.user_role] || u.user_role || '';
   };
 
   return (
@@ -103,7 +116,7 @@ export default function ProfilePage() {
             <p className="text-sm text-muted-foreground mt-1 mb-3 break-all">{user?.email_address}</p>
             
             <Badge variant={user?.user_role === 'super_admin' ? 'danger' : 'primary'} className="mb-4">
-              {roleLabels[user?.user_role || ''] || user?.user_role}
+              {getDynamicRoleLabel(user)}
             </Badge>
 
             {/* School / Region Details if they exist */}

@@ -82,7 +82,7 @@ export default function ManagementScreen({ navigation }: any) {
   const visibleItems = menuItems.filter((item) => item.roles.includes(userRole));
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <ScrollView 
         contentContainerStyle={styles.scroll}
         refreshControl={
@@ -117,7 +117,7 @@ export default function ManagementScreen({ navigation }: any) {
           ))}
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 

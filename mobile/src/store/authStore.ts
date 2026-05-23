@@ -8,6 +8,7 @@ export interface User {
   user_role: string;
   account_status: string;
   profile_photo_url: string | null;
+  phone_number: string | null;
   student_id_number: string | null;
   class_name: string | null;
   member_qr_uuid: string | null;

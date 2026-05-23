@@ -73,18 +73,18 @@ const syncBookStock = async (bookId: number, transaction?: Transaction): Promise
       });
       const qrIds = bookQrs.map((qr) => qr.book_qr_id);
 
-      let pendingOrReservedCount = 0;
+      let pendingCount = 0;
       if (qrIds.length > 0) {
-        pendingOrReservedCount = await Borrowing.count({
+        pendingCount = await Borrowing.count({
           where: {
             book_qr_id: { [Op.in]: qrIds },
-            borrowing_status: { [Op.in]: [BorrowingStatus.PENDING, BorrowingStatus.RESERVED] },
+            borrowing_status: { [Op.in]: [BorrowingStatus.PENDING] },
           },
           transaction,
         });
       }
 
-      const newAvailableStock = Math.max(0, activeQrCount - pendingOrReservedCount);
+      const newAvailableStock = Math.max(0, activeQrCount - pendingCount);
 
       // Count borrowed QR codes (status = BORROWED)
       const newBorrowedStock = await BookQr.count({

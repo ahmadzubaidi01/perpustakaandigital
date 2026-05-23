@@ -57,8 +57,8 @@ export const authAPI = {
 export const booksAPI = {
   list: (params?: any) => api.get('/v1/books', { params }),
   get: (id: number) => api.get(`/v1/books/${id}`),
-  create: (data: any) => api.post('/v1/books', data),
-  update: (id: number, data: any) => api.put(`/v1/books/${id}`, data),
+  create: (data: any) => api.post('/v1/books', data, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  update: (id: number, data: any) => api.put(`/v1/books/${id}`, data, { headers: { 'Content-Type': 'multipart/form-data' } }),
   delete: (id: number) => api.delete(`/v1/books/${id}`),
 };
 
@@ -66,7 +66,6 @@ export const booksAPI = {
 export const borrowingsAPI = {
   list: (params?: any) => api.get('/v1/borrowings', { params }),
   create: (data: { book_qr_id: number }) => api.post('/v1/borrowings', data),
-  reserve: (data: { book_qr_id: number }) => api.post('/v1/borrowings/reserve', data),
   extend: (id: number) => api.patch(`/v1/borrowings/${id}/extend`),
   approve: (id: number) => api.patch(`/v1/borrowings/${id}/approve`),
   return: (id: number) => api.patch(`/v1/borrowings/${id}/return`),
@@ -138,7 +137,9 @@ export const usersAPI = {
   create: (data: any) => api.post('/v1/users', data),
   update: (id: number, data: any) => api.put(`/v1/users/${id}`, data),
   delete: (id: number) => api.delete(`/v1/users/${id}`),
+  updateProfile: (data: any) => api.put('/v1/users/profile', data),
   changePassword: (data: any) => api.put('/v1/users/change-password', data),
+  import: (formData: FormData) => api.post('/v1/users/import', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
 };
 
 // Regions & Schools API
@@ -185,6 +186,7 @@ export const reviewsAPI = {
 export const settingsAPI = {
   get: (schoolId?: number) => api.get(schoolId ? `/v1/settings/${schoolId}` : '/v1/settings'),
   update: (data: any, schoolId?: number) => api.put(schoolId ? `/v1/settings/${schoolId}` : '/v1/settings', data),
+  cleanup: () => api.post('/v1/settings/cleanup'),
 };
 
 

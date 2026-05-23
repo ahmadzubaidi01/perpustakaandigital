@@ -23,34 +23,39 @@ export default function NotificationsScreen({ navigation }: any) {
       console.log('[NotificationsScreen] API Response data:', res.data);
       const systemNotifs = res.data?.data || [];
 
-      // 2. Fetch chat conversations to list them as chat notifications
+      // 2. Fetch chat conversations to list them as chat notifications (only if NOT student)
       let chatNotifs: any[] = [];
-      try {
-        const chatRes = await chatAPI.listConversations();
-        const conversations = chatRes.data?.data || [];
-        const currentUserId = useAuthStore.getState().user?.user_id;
+      const currentUser = useAuthStore.getState().user;
+      const isStudent = currentUser?.user_role === 'student_member';
 
-        conversations.forEach((conv: any) => {
-          if (conv.last_message) {
-            const other = conv.participant_1_id === currentUserId
-              ? conv.participant_2
-              : conv.participant_1;
-            
-            if (other) {
-              chatNotifs.push({
-                notification_id: `chat-${conv.conversation_id}`,
-                notification_title: `Pesan Baru dari ${other.full_name}`,
-                notification_message: conv.last_message.message_text || 'Mengirim pesan.',
-                notification_type: 'chat_incoming',
-                is_read: conv.unread_count === 0,
-                created_at: conv.last_message_at || conv.last_message.created_at || new Date().toISOString(),
-                conversation: conv,
-              });
+      if (!isStudent) {
+        try {
+          const chatRes = await chatAPI.listConversations();
+          const conversations = chatRes.data?.data || [];
+          const currentUserId = currentUser?.user_id;
+
+          conversations.forEach((conv: any) => {
+            if (conv.last_message) {
+              const other = conv.participant_1_id === currentUserId
+                ? conv.participant_2
+                : conv.participant_1;
+              
+              if (other) {
+                chatNotifs.push({
+                  notification_id: `chat-${conv.conversation_id}`,
+                  notification_title: `Pesan Baru dari ${other.full_name}`,
+                  notification_message: conv.last_message.message_text || 'Mengirim pesan.',
+                  notification_type: 'chat_incoming',
+                  is_read: conv.unread_count === 0,
+                  created_at: conv.last_message_at || conv.last_message.created_at || new Date().toISOString(),
+                  conversation: conv,
+                });
+              }
             }
-          }
-        });
-      } catch (chatError) {
-        console.error('[NotificationsScreen] Fetch chats failed:', chatError);
+          });
+        } catch (chatError) {
+          console.error('[NotificationsScreen] Fetch chats failed:', chatError);
+        }
       }
 
       // Combine and sort by created_at DESC

@@ -9,5 +9,9 @@
   },
   "devDependencies": {
     "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "csv-parser": "^3.2.1",
+    "multer": "^2.1.1"
   }
 }

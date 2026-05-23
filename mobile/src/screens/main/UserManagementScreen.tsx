@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, RefreshControl, Modal, ActivityIndicator, Alert, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, RefreshControl, Modal, ActivityIndicator, Alert, ScrollView, KeyboardAvoidingView, Platform, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { usersAPI, regionsAPI } from '../../services/api';
+import api, { usersAPI, regionsAPI } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { useTheme } from '../../context/ThemeContext';
-import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
+import { Spacing, FontSize, BorderRadius, API_BASE_URL } from '../../constants/theme';
+import * as DocumentPicker from 'expo-document-picker';
+import { checkOnlineStatus } from '../../services/syncService';
+import * as SecureStore from 'expo-secure-store';
 
 export default function UserManagementScreen({ navigation }: any) {
   const { user: currentUser } = useAuthStore();
@@ -40,6 +43,18 @@ export default function UserManagementScreen({ navigation }: any) {
   const [selectedDistrictId, setSelectedDistrictId] = useState<number | null>(null);
   const [selectedRegencyId, setSelectedRegencyId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Bulk import states
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importFile, setImportFile] = useState<any>(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<any>(null);
+
+  // Bulk import school search states
+  const [importSchoolSearchQuery, setImportSchoolSearchQuery] = useState('');
+  const [importSchoolSearchResults, setImportSchoolSearchResults] = useState<any[]>([]);
+  const [importSelectedSchool, setImportSelectedSchool] = useState<any | null>(null);
+  const [searchingImportSchools, setSearchingImportSchools] = useState(false);
 
   // Dropdown visibility
   const [showRoleDropdown, setShowRoleDropdown] = useState(false);
@@ -98,6 +113,116 @@ export default function UserManagementScreen({ navigation }: any) {
       setSelectedSchoolId(Number(currentUser.school_id));
     }
   }, [currentUser, userRole, showFormModal]);
+
+  const handlePickFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['text/comma-separated-values', 'text/csv', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'],
+        copyToCacheDirectory: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const file = result.assets[0];
+        if (file.size && file.size > 10 * 1024 * 1024) {
+          Alert.alert('File Terlalu Besar', 'Ukuran dokumen maksimal adalah 10MB.');
+          return;
+        }
+        setImportFile(file);
+        setImportResult(null);
+      }
+    } catch (err) {
+      Alert.alert('Gagal', 'Terjadi kesalahan saat memilih file');
+    }
+  };
+
+  const handleDownloadTemplate = async (format: 'csv' | 'xlsx') => {
+    try {
+      const isOnline = await checkOnlineStatus();
+      if (!isOnline) {
+        Alert.alert('Koneksi Gagal', 'Anda sedang offline. Pastikan perangkat terhubung dengan server backend untuk mengunduh template.');
+        return;
+      }
+      const token = await SecureStore.getItemAsync('access_token');
+      const url = `${api.defaults.baseURL}/v1/users/import-template?token=${token}&format=${format}`;
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert('Gagal', 'Tidak dapat mengunduh template.');
+    }
+  };
+
+  const handleImportSchoolSearch = async (query: string) => {
+    setImportSchoolSearchQuery(query);
+    if (!query.trim()) {
+      setImportSchoolSearchResults([]);
+      return;
+    }
+    setSearchingImportSchools(true);
+    try {
+      const params: any = { search: query, limit: 10 };
+      if (currentUser?.user_role === 'regency_admin') {
+        params.regency_id = currentUser.regency_id;
+      } else if (currentUser?.user_role === 'district_admin') {
+        params.district_id = currentUser.district_id;
+      }
+      const res = await regionsAPI.listSchools(params);
+      setImportSchoolSearchResults(res.data.data || []);
+    } catch {
+      // Fail silently
+    } finally {
+      setSearchingImportSchools(false);
+    }
+  };
+
+  const handleImportSubmit = async () => {
+    if (!importFile) return;
+
+    const isSchoolRequired = currentUser?.user_role && ['super_admin', 'regency_admin', 'district_admin'].includes(currentUser.user_role);
+    if (isSchoolRequired && !importSelectedSchool) {
+      Alert.alert('Validasi Gagal', 'Silakan cari dan pilih sekolah tujuan terlebih dahulu.');
+      return;
+    }
+
+    try {
+      const isOnline = await checkOnlineStatus();
+      if (!isOnline) {
+        Alert.alert('Koneksi Gagal', 'Anda sedang offline. Pastikan perangkat terhubung dengan server backend untuk mengimpor data.');
+        return;
+      }
+    } catch {
+      Alert.alert('Koneksi Gagal', 'Gagal memverifikasi status koneksi internet.');
+      return;
+    }
+
+    setImporting(true);
+    setImportResult(null);
+
+    const formData = new FormData();
+    formData.append('file', {
+      uri: importFile.uri,
+      name: importFile.name,
+      type: importFile.mimeType || 'text/csv',
+    } as any);
+
+    if (importSelectedSchool) {
+      formData.append('school_id', String(importSelectedSchool.school_id));
+    }
+
+    try {
+      const res = await usersAPI.import(formData);
+      setImportResult(res.data.data);
+      if (res.data.data.success_count > 0) {
+        Alert.alert('Sukses', `Berhasil mengimport ${res.data.data.success_count} pengguna!`);
+        fetchUsers(true);
+      } else {
+        Alert.alert('Gagal', 'Gagal mengimport pengguna. Silakan periksa detail kesalahan.');
+      }
+    } catch (err: any) {
+      const errMsg = err.response?.data?.message || 'Gagal mengimport file';
+      Alert.alert('Gagal', errMsg);
+    } finally {
+      setImporting(false);
+    }
+  };
 
   // Fetch Regencies (Only if super_admin or regency_id is not set)
   useEffect(() => {
@@ -338,13 +463,26 @@ export default function UserManagementScreen({ navigation }: any) {
     ]);
   };
 
-  const getRoleBadgeColor = (role: string) => {
+  const getRoleBadgeColor = (u: any) => {
+    if (!u) return { bg: colors.success500 + '15', text: colors.success500, label: 'Siswa / Anggota' };
+    const role = u.user_role;
     switch (role) {
-      case 'super_admin': return { bg: colors.danger500 + '15', text: colors.danger500, label: 'Super Admin' };
-      case 'regency_admin': return { bg: colors.accent500 + '15', text: colors.accent500, label: 'Admin Kab' };
-      case 'district_admin': return { bg: colors.info500 + '15', text: colors.info500, label: 'Admin Kec' };
-      case 'school_admin': return { bg: colors.primary400 + '15', text: colors.primary400, label: 'Admin Sekolah' };
-      default: return { bg: colors.success500 + '15', text: colors.success500, label: 'Siswa / Anggota' };
+      case 'super_admin': 
+        return { bg: colors.danger500 + '15', text: colors.danger500, label: 'Super Admin' };
+      case 'regency_admin': {
+        const label = u.regency?.regency_name ? `Admin ${u.regency.regency_name}` : 'Admin Kab';
+        return { bg: colors.accent500 + '15', text: colors.accent500, label };
+      }
+      case 'district_admin': {
+        const label = u.district?.district_name ? `Admin Kec. ${u.district.district_name}` : 'Admin Kec';
+        return { bg: colors.info500 + '15', text: colors.info500, label };
+      }
+      case 'school_admin': {
+        const label = u.school?.school_name ? `Admin ${u.school.school_name}` : 'Admin Sekolah';
+        return { bg: colors.primary400 + '15', text: colors.primary400, label };
+      }
+      default: 
+        return { bg: colors.success500 + '15', text: colors.success500, label: 'Siswa / Anggota' };
     }
   };
 
@@ -355,9 +493,14 @@ export default function UserManagementScreen({ navigation }: any) {
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Manajemen User</Text>
-        <TouchableOpacity style={styles.addBtn} onPress={() => handleOpenForm()}>
-          <Ionicons name="add-circle" size={26} color={colors.text} />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
+          <TouchableOpacity style={styles.addBtn} onPress={() => setShowImportModal(true)}>
+            <Ionicons name="cloud-upload-outline" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.addBtn} onPress={() => handleOpenForm()}>
+            <Ionicons name="add-circle" size={26} color={colors.text} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Role filter bar */}
@@ -410,7 +553,7 @@ export default function UserManagementScreen({ navigation }: any) {
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchUsers(true); }} tintColor={colors.primary400} />}
           renderItem={({ item }) => {
-            const badge = getRoleBadgeColor(item.user_role);
+            const badge = getRoleBadgeColor(item);
             return (
               <View style={styles.card}>
                 <View style={styles.avatar}><Text style={styles.avatarText}>{item.full_name?.charAt(0).toUpperCase()}</Text></View>
@@ -470,10 +613,12 @@ export default function UserManagementScreen({ navigation }: any) {
                   <TextInput style={styles.input} keyboardType="email-address" placeholder="email@sekolah.sch.id..." placeholderTextColor={colors.surface400} value={emailAddress} onChangeText={setEmailAddress} />
                 </View>
 
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Kata Sandi {selectedUser ? '(Kosongkan jika tidak diubah)' : '*'}</Text>
-                  <TextInput style={styles.input} secureTextEntry placeholder="Ketik minimal 8 karakter..." placeholderTextColor={colors.surface400} value={password} onChangeText={setPassword} />
-                </View>
+                {(!selectedUser || currentUser?.user_role === 'super_admin') && (
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.label}>Kata Sandi {selectedUser ? '(Kosongkan jika tidak diubah)' : '*'}</Text>
+                    <TextInput style={styles.input} secureTextEntry placeholder="Ketik minimal 8 karakter..." placeholderTextColor={colors.surface400} value={password} onChangeText={setPassword} />
+                  </View>
+                )}
 
                 <View style={styles.inputGroup}>
                   <Text style={styles.label}>Nomor Telepon (Opsional)</Text>
@@ -645,6 +790,173 @@ export default function UserManagementScreen({ navigation }: any) {
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Import Modal */}
+      <Modal visible={showImportModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxHeight: '80%' }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.md }}>
+              <Text style={styles.modalTitle}>Import Pengguna Bulk</Text>
+              <TouchableOpacity onPress={() => { setShowImportModal(false); setImportFile(null); setImportResult(null); setImportSchoolSearchQuery(''); setImportSchoolSearchResults([]); setImportSelectedSchool(null); }}>
+                <Ionicons name="close" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={{ gap: Spacing.md }} keyboardShouldPersistTaps="handled">
+              <Text style={{ fontSize: FontSize.xs, color: colors.textMuted }}>
+                Import banyak akun sekaligus menggunakan file CSV atau Excel (.xlsx/.xls) sesuai format template resmi. Kata sandi akan otomatis dibuat berupa NISNPw@.
+              </Text>
+
+              <View style={{ flexDirection: 'row', gap: Spacing.sm }}>
+                <TouchableOpacity style={[styles.cancelBtn, { flex: 1, backgroundColor: colors.primary500 + '15', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs, paddingVertical: 10 }]} onPress={() => handleDownloadTemplate('csv')}>
+                  <Ionicons name="download-outline" size={16} color={colors.primary400} />
+                  <Text style={{ color: colors.primary400, fontWeight: '700', fontSize: 11 }}>Template CSV</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.cancelBtn, { flex: 1, backgroundColor: colors.primary500 + '15', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs, paddingVertical: 10 }]} onPress={() => handleDownloadTemplate('xlsx')}>
+                  <Ionicons name="download-outline" size={16} color={colors.primary400} />
+                  <Text style={{ color: colors.primary400, fontWeight: '700', fontSize: 11 }}>Template Excel</Text>
+                </TouchableOpacity>
+              </View>
+
+              {currentUser?.user_role && ['super_admin', 'regency_admin', 'district_admin'].includes(currentUser.user_role) && (
+                <View style={{ gap: Spacing.xs, zIndex: 10 }}>
+                  <Text style={styles.label}>Sekolah Tujuan (Wajib)</Text>
+                  {importSelectedSchool ? (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: colors.surface900 + '30', borderWidth: 1, borderColor: colors.primary500 + '30', borderRadius: BorderRadius.md, padding: Spacing.md }}>
+                      <View style={{ flex: 1, marginRight: Spacing.md }}>
+                        <Text style={{ color: colors.text, fontSize: FontSize.sm, fontWeight: '700' }}>{importSelectedSchool.school_name}</Text>
+                        <Text style={{ color: colors.textMuted, fontSize: 10 }}>ID Sekolah: {importSelectedSchool.school_id}</Text>
+                      </View>
+                      <TouchableOpacity 
+                        style={{ paddingHorizontal: Spacing.md, paddingVertical: 6, backgroundColor: colors.surface700, borderRadius: BorderRadius.sm }} 
+                        onPress={() => setImportSelectedSchool(null)}
+                      >
+                        <Text style={{ color: colors.white, fontSize: 10, fontWeight: '700' }}>Ubah</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={{ position: 'relative' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface900, borderWidth: 1, borderColor: colors.surface600, borderRadius: BorderRadius.md, paddingHorizontal: Spacing.md, height: 46 }}>
+                        <Ionicons name="search" size={16} color={colors.surface400} />
+                        <TextInput
+                          style={{ flex: 1, color: colors.text, fontSize: FontSize.sm, marginLeft: Spacing.sm }}
+                          value={importSchoolSearchQuery}
+                          onChangeText={handleImportSchoolSearch}
+                          placeholder="Cari sekolah tujuan..."
+                          placeholderTextColor={colors.surface400}
+                        />
+                      </View>
+                      
+                      {importSchoolSearchQuery.trim() !== '' && (
+                        <View style={{ backgroundColor: colors.surface800, borderWidth: 1, borderColor: colors.surface600, borderRadius: BorderRadius.md, marginTop: 4, maxHeight: 150, overflow: 'hidden' }}>
+                          <ScrollView nestedScrollEnabled={true} contentContainerStyle={{ padding: Spacing.xs }}>
+                            {searchingImportSchools ? (
+                              <View style={{ padding: Spacing.md, alignItems: 'center' }}>
+                                <ActivityIndicator size="small" color={colors.primary400} />
+                              </View>
+                            ) : importSchoolSearchResults.length > 0 ? (
+                              importSchoolSearchResults.map((school, index) => (
+                                <TouchableOpacity 
+                                  key={`import-school-${school.school_id || index}-${index}`}
+                                  style={{ padding: Spacing.md, borderBottomWidth: 1, borderBottomColor: colors.surface700 }}
+                                  onPress={() => {
+                                    setImportSelectedSchool(school);
+                                    setImportSchoolSearchQuery('');
+                                    setImportSchoolSearchResults([]);
+                                  }}
+                                >
+                                  <Text style={{ color: colors.text, fontSize: FontSize.sm, fontWeight: '700' }}>{school.school_name}</Text>
+                                  <Text style={{ color: colors.textMuted, fontSize: 10 }}>Kec. {school.district?.district_name || '-'} • Kab. {school.regency?.regency_name || '-'}</Text>
+                                </TouchableOpacity>
+                              ))
+                            ) : (
+                              <View style={{ padding: Spacing.md, alignItems: 'center' }}>
+                                <Text style={{ color: colors.textMuted, fontSize: FontSize.xs }}>Sekolah tidak ditemukan</Text>
+                              </View>
+                            )}
+                          </ScrollView>
+                        </View>
+                      )}
+                    </View>
+                  )}
+                </View>
+              )}
+
+              <TouchableOpacity 
+                style={{ 
+                  borderWidth: 1, 
+                  borderStyle: 'dashed', 
+                  borderColor: colors.surface600, 
+                  borderRadius: BorderRadius.lg, 
+                  padding: Spacing.xl, 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  backgroundColor: colors.surface900 + '30',
+                  gap: Spacing.sm
+                }} 
+                onPress={handlePickFile}
+              >
+                <Ionicons name="document-text-outline" size={32} color={colors.primary400} />
+                <Text style={{ fontSize: FontSize.sm, fontWeight: '700', color: colors.text }}>
+                  {importFile ? importFile.name : 'Pilih File Excel/CSV'}
+                </Text>
+                <Text style={{ fontSize: 10, color: colors.textMuted }}>
+                  {importFile ? `${(importFile.size / 1024).toFixed(1)} KB` : 'Mendukung format .csv, .xlsx, .xls'}
+                </Text>
+              </TouchableOpacity>
+
+              {importFile && !importResult && (
+                <TouchableOpacity 
+                  style={[styles.saveBtn, { width: '100%', marginTop: Spacing.md }]} 
+                  onPress={handleImportSubmit} 
+                  disabled={importing}
+                >
+                  {importing ? (
+                    <ActivityIndicator size="small" color={colors.white} />
+                  ) : (
+                    <Text style={styles.saveBtnText}>Jalankan Import</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+
+              {importResult && (
+                <View style={{ gap: Spacing.md, marginTop: Spacing.md }}>
+                  <View style={{ flexDirection: 'row', gap: Spacing.md }}>
+                    <View style={{ flex: 1, padding: Spacing.md, backgroundColor: colors.success500 + '10', borderWidth: 1, borderColor: colors.success500 + '30', borderRadius: BorderRadius.md }}>
+                      <Text style={{ fontSize: 10, color: colors.success500, fontWeight: '700', textTransform: 'uppercase' }}>Sukses</Text>
+                      <Text style={{ fontSize: FontSize.xxl, fontWeight: '800', color: colors.success500, marginTop: 4 }}>
+                        {importResult.success_count}
+                      </Text>
+                    </View>
+                    <View style={{ flex: 1, padding: Spacing.md, backgroundColor: colors.danger500 + '10', borderWidth: 1, borderColor: colors.danger500 + '30', borderRadius: BorderRadius.md }}>
+                      <Text style={{ fontSize: 10, color: colors.danger500, fontWeight: '700', textTransform: 'uppercase' }}>Gagal</Text>
+                      <Text style={{ fontSize: FontSize.xxl, fontWeight: '800', color: colors.danger500, marginTop: 4 }}>
+                        {importResult.error_count}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {importResult.errors && importResult.errors.length > 0 && (
+                    <View style={{ gap: Spacing.xs }}>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: colors.textMuted, textTransform: 'uppercase' }}>Detail Kesalahan:</Text>
+                      <View style={{ maxHeight: 120, borderWidth: 1, borderColor: colors.surface600, borderRadius: BorderRadius.md, backgroundColor: colors.surface900, overflow: 'hidden' }}>
+                        <ScrollView nestedScrollEnabled={true} contentContainerStyle={{ padding: Spacing.sm, gap: Spacing.xs }}>
+                          {importResult.errors.map((err: any, idx: number) => (
+                            <Text key={idx} style={{ fontSize: 10, color: colors.textMuted }}>
+                              <Text style={{ color: colors.danger500, fontWeight: '700' }}>Baris {err.row}: </Text>
+                              {err.error}
+                            </Text>
+                          ))}
+                        </ScrollView>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );

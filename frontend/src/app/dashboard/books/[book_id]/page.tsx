@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Pencil, Trash2, Book, QrCode, Loader2, Download, Plus } from 'lucide-react';
-import { booksAPI, qrAPI } from '@/lib/api';
+import { booksAPI, qrAPI, getMediaUrl } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import { QRCodeSVG } from 'qrcode.react';
 import toast from 'react-hot-toast';
@@ -174,7 +174,7 @@ export default function BookDetailPage() {
           {/* Cover */}
           <div className="w-full md:w-48 aspect-[3/4] rounded-xl overflow-hidden flex-shrink-0 bg-muted">
             {book.cover_image_url ? (
-              <img src={`http://localhost:5000${book.cover_image_url}`} alt={book.book_title} className="w-full h-full object-cover" />
+              <img src={getMediaUrl(book.cover_image_url)} alt={book.book_title} className="w-full h-full object-cover" />
             ) : (
               <div className="w-full h-full flex items-center justify-center">
                 <Book size={48} className="text-muted-foreground/50" />
@@ -318,12 +318,20 @@ export default function BookDetailPage() {
                     )}
 
                     {qr.qr_status === 'borrowed' || (qr.qr_status === 'active' && qr.borrowings && qr.borrowings.length > 0) ? (
-                      <span 
-                        className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold rounded bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400 border border-blue-100 dark:border-blue-900/30 w-full justify-center truncate" 
-                        title={`Dipinjam: ${qr.borrowings?.[0]?.borrower?.full_name || 'Siswa'}`}
-                      >
-                        Dipinjam: {qr.borrowings?.[0]?.borrower?.full_name || 'Siswa'}
-                      </span>
+                      (() => {
+                        const b = qr.borrowings?.[0];
+                        const borrowerText = b?.borrower
+                          ? `${b.borrower.full_name} (NISN: ${b.borrower.student_id_number || '-'} • Kelas: ${b.borrower.class_name || '-'})`
+                          : 'Siswa';
+                        return (
+                          <span 
+                            className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold rounded bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400 border border-blue-100 dark:border-blue-900/30 w-full justify-center truncate" 
+                            title={`Dipinjam: ${borrowerText}`}
+                          >
+                            Dipinjam: {b?.borrower?.full_name || 'Siswa'}
+                          </span>
+                        );
+                      })()
                     ) : qr.qr_status === 'active' ? (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold rounded bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/30 w-full justify-center">
                         Tersedia

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Save, Settings2, Info } from 'lucide-react';
+import { Save, Settings2, Info, Trash2, RefreshCw } from 'lucide-react';
 import { settingsAPI } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import toast from 'react-hot-toast';
@@ -24,6 +24,27 @@ export default function SettingsPage() {
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+
+  const handleCleanup = async () => {
+    const confirm = window.confirm(
+      'Apakah Anda yakin ingin menghapus seluruh foto buku, profil, dan QR code yang tidak digunakan di server?\n\nTindakan ini aman dan hanya akan menghapus file usang yang tidak terhubung dengan data aktif perpustakaan.'
+    );
+    if (!confirm) return;
+
+    setCleaning(true);
+    try {
+      const res = await settingsAPI.cleanup();
+      const { deleted_files_count, formatted_space_saved } = res.data.data;
+      toast.success(
+        `Pembersihan selesai! Berhasil menghapus ${deleted_files_count} file tidak terpakai, menghemat ${formatted_space_saved} penyimpanan.`
+      );
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Gagal melakukan pembersihan file server.');
+    } finally {
+      setCleaning(false);
+    }
+  };
 
   useEffect(() => {
     settingsAPI.get(user?.school_id || undefined)
@@ -183,6 +204,44 @@ export default function SettingsPage() {
               </Button>
             </div>
           </form>
+        </Card>
+
+        <Card hoverable={false} className="p-6">
+          <div className="flex items-center gap-3 pb-4 mb-6 border-b border-border">
+            <div className="p-2 bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400 rounded-lg">
+              <Trash2 size={20} />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-foreground">Pemeliharaan Penyimpanan Server</h3>
+              <p className="text-xs text-muted-foreground">Kelola dan bersihkan file media serta QR code usang di server.</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <p className="text-sm text-foreground/80 leading-relaxed">
+              Sistem akan memindai seluruh direktori penyimpanan cover buku, foto profil, dan gambar QR code di server. Seluruh file fisik yang tidak lagi terikat dengan data aktif apa pun di database (termasuk yang berasal dari data yang telah dihapus) akan dibersihkan secara permanen untuk membebaskan ruang penyimpanan.
+            </p>
+
+            <div className="flex items-start gap-2.5 bg-amber-50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 p-3.5 rounded-lg text-xs leading-relaxed border border-amber-200/50 dark:border-amber-900/30">
+              <Info size={16} className="shrink-0 mt-0.5" />
+              <span>
+                <strong>Perhatian:</strong> Tindakan ini bersifat permanen dan akan langsung mengeksekusi penghapusan fisik di server filesystem. Pastikan data penting Anda telah tersinkronisasi.
+              </span>
+            </div>
+
+            <div className="pt-4 flex justify-start">
+              <Button
+                type="button"
+                variant="danger"
+                size="md"
+                isLoading={cleaning}
+                onClick={handleCleanup}
+                leftIcon={<Trash2 size={18} />}
+              >
+                {cleaning ? 'Membersihkan...' : 'Bersihkan File Tidak Digunakan'}
+              </Button>
+            </div>
+          </div>
         </Card>
       </div>
     </div>

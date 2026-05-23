@@ -38,14 +38,14 @@ declare global {
  */
 const authenticate = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
+    let token = '';
     const authHeader = req.headers.authorization;
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      apiResponse.unauthorized(res, 'Access token is required');
-      return;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    } else if (req.query.token && typeof req.query.token === 'string') {
+      token = req.query.token;
     }
-
-    const token = authHeader.split(' ')[1];
 
     if (!token) {
       apiResponse.unauthorized(res, 'Access token is required');

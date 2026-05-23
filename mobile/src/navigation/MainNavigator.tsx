@@ -38,7 +38,7 @@ function TabNavigator() {
 
   return (
     <Tab.Navigator
-      screenOptions={({ route }) => ({
+      screenOptions={({ route, navigation }) => ({
         headerStyle: { backgroundColor: colors.surface800, elevation: 0, shadowOpacity: 0, borderBottomWidth: 1, borderBottomColor: colors.surface600 },
         headerTintColor: colors.text,
         headerTitleStyle: { fontWeight: '700', fontSize: FontSize.lg },
@@ -58,18 +58,43 @@ function TabNavigator() {
         },
         headerRight: () => {
           const { isDark, toggleTheme, colors: themeColors } = useTheme();
+          const { hasUnread } = useNotificationStore();
           return (
-            <TouchableOpacity
-              onPress={toggleTheme}
-              style={{ marginRight: 16, padding: 8, borderRadius: 20, backgroundColor: themeColors.surface700 }}
-              activeOpacity={0.7}
-            >
-              <Ionicons
-                name={isDark ? 'sunny' : 'moon'}
-                size={18}
-                color={isDark ? themeColors.accent500 : themeColors.primary400}
-              />
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 16, gap: 8 }}>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('Notifications')}
+                style={{ padding: 8, borderRadius: 20, backgroundColor: themeColors.surface700, position: 'relative' }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="notifications-outline" size={18} color={themeColors.text} />
+                {hasUnread && (
+                  <View
+                    style={{
+                      position: 'absolute',
+                      right: 6,
+                      top: 6,
+                      width: 8,
+                      height: 8,
+                      borderRadius: 4,
+                      backgroundColor: '#EF4444',
+                      borderWidth: 1.5,
+                      borderColor: themeColors.surface700,
+                    }}
+                  />
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={toggleTheme}
+                style={{ padding: 8, borderRadius: 20, backgroundColor: themeColors.surface700 }}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={isDark ? 'sunny' : 'moon'}
+                  size={18}
+                  color={isDark ? themeColors.accent500 : themeColors.primary400}
+                />
+              </TouchableOpacity>
+            </View>
           );
         }
       })}
@@ -107,51 +132,10 @@ function TabNavigator() {
       <Tab.Screen
         name="ProfileTab"
         component={ProfileScreen}
-        options={({ navigation }) => ({
+        options={{
           title: 'Profil',
           headerTitle: 'Profil Saya',
-          headerRight: () => {
-            const { isDark, toggleTheme, colors: themeColors } = useTheme();
-            const { hasUnread } = useNotificationStore();
-            return (
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 16, gap: 8 }}>
-                <TouchableOpacity
-                  onPress={() => navigation.navigate('Notifications')}
-                  style={{ padding: 8, borderRadius: 20, backgroundColor: themeColors.surface700, position: 'relative' }}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="notifications-outline" size={18} color={themeColors.text} />
-                  {hasUnread && (
-                    <View
-                      style={{
-                        position: 'absolute',
-                        right: 6,
-                        top: 6,
-                        width: 8,
-                        height: 8,
-                        borderRadius: 4,
-                        backgroundColor: '#EF4444',
-                        borderWidth: 1.5,
-                        borderColor: themeColors.surface700,
-                      }}
-                    />
-                  )}
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={toggleTheme}
-                  style={{ padding: 8, borderRadius: 20, backgroundColor: themeColors.surface700 }}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons
-                    name={isDark ? 'sunny' : 'moon'}
-                    size={18}
-                    color={isDark ? themeColors.accent500 : themeColors.primary400}
-                  />
-                </TouchableOpacity>
-              </View>
-            );
-          }
-        })}
+        }}
       />
     </Tab.Navigator>
   );

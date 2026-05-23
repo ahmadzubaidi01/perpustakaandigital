@@ -23,6 +23,9 @@ const listUsers = asyncHandler(async (req: Request, res: Response): Promise<void
   const search = parseSearchQuery(req);
   const where: any = { ...filters };
 
+  // Exclude the current logged-in user from the user listing
+  where.user_id = { [Op.ne]: req.user!.user_id };
+
   // Regional scope: build smarter filter that covers both direct assignment and school-based membership
   const userRole = req.user!.user_role as UserRole;
   if (userRole === UserRole.REGENCY_ADMIN && req.user!.regency_id) {
@@ -144,7 +147,7 @@ const updateUser = asyncHandler(async (req: Request, res: Response): Promise<voi
   }
 
   const oldValues = user.toJSON();
-  const { full_name, phone_number, student_id_number, class_name, account_status, user_role, school_id, district_id, regency_id } = req.body;
+  const { full_name, phone_number, student_id_number, class_name, account_status, user_role, school_id, district_id, regency_id, password } = req.body;
   const updates: any = {};
 
   if (full_name) updates.full_name = full_name;
@@ -157,6 +160,16 @@ const updateUser = asyncHandler(async (req: Request, res: Response): Promise<voi
   if (district_id !== undefined) updates.district_id = district_id === '' ? null : district_id;
   if (regency_id !== undefined) updates.regency_id = regency_id === '' ? null : regency_id;
   if (req.file) updates.profile_photo_url = `/uploads/${req.file.filename}`;
+
+  if (password !== undefined && password !== '') {
+    if (currentUserRole !== UserRole.SUPER_ADMIN && user.user_id !== req.user!.user_id) {
+      apiResponse.forbidden(res, 'Hanya Super Admin yang dapat mengganti kata sandi pengguna lain');
+      return;
+    }
+    const pwCheck = validatePasswordComplexity(password);
+    if (!pwCheck.valid) { apiResponse.unprocessable(res, 'Kata sandi tidak memenuhi kriteria', pwCheck.errors); return; }
+    updates.password_hash = await bcrypt.hash(password, env.BCRYPT_SALT_ROUNDS);
+  }
 
   await user.update(updates);
   await createAuditLog(buildAuditFromRequest(req, AuditActionType.UPDATE, TABLE_NAMES.USERS, user.user_id, oldValues, updates));

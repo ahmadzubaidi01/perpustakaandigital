@@ -7,10 +7,11 @@ import { asyncHandler } from '../middleware/errorHandler';
 import { generateBorrowingCode, calculateLatePenalty, isPastDue } from '../utils/helpers';
 import { syncBookStock } from '../services/stockSyncService';
 import { createAuditLog, buildAuditFromRequest } from '../services/auditService';
-import { sendDueReminder, sendLateWarning } from '../services/notificationService';
+import { sendDueReminder, sendLateWarning, sendBorrowingEvent, sendReturnEvent } from '../services/notificationService';
 import { parsePaginationParams, buildPaginationResult, parseFilterParams } from '../utils/pagination';
 import { buildRegionalFilter, isWithinScope } from '../middleware/rbac';
 import env from '../config/environment';
+import logger from '../utils/logger';
 
 /**
  * POST /api/v1/borrowings
@@ -25,7 +26,15 @@ const createBorrowing = asyncHandler(async (req: Request, res: Response): Promis
     // Lock the QR record for concurrency safety
     const bookQr = await BookQr.findByPk(book_qr_id, { lock: Transaction.LOCK.UPDATE, transaction: t, include: [{ association: 'book', attributes: ['book_id', 'book_title', 'school_id', 'available_stock'] }] });
     if (!bookQr) throw Object.assign(new Error('Book QR not found'), { statusCode: 404 });
-    if (bookQr.qr_status !== QrStatus.ACTIVE) throw Object.assign(new Error(`QR code is ${bookQr.qr_status}`), { statusCode: 400 });
+    if (bookQr.qr_status !== QrStatus.ACTIVE) {
+      let statusMsg = 'Buku tidak tersedia untuk dipinjam';
+      if (bookQr.qr_status === QrStatus.DAMAGED) statusMsg = 'Buku sedang rusak';
+      else if (bookQr.qr_status === QrStatus.LOST) statusMsg = 'Buku telah hilang';
+      else if (bookQr.qr_status === QrStatus.MAINTENANCE) statusMsg = 'Buku sedang dalam perbaikan/perawatan';
+      else if (bookQr.qr_status === QrStatus.BORROWED) statusMsg = 'Buku sedang dipinjam';
+      else if (bookQr.qr_status === QrStatus.INACTIVE) statusMsg = 'Buku tidak aktif';
+      throw Object.assign(new Error(statusMsg), { statusCode: 400 });
+    }
 
     const book = (bookQr as any).book;
     if (!book) throw Object.assign(new Error('Associated book not found'), { statusCode: 404 });
@@ -36,7 +45,7 @@ const createBorrowing = asyncHandler(async (req: Request, res: Response): Promis
     }
 
     // Check if QR is already actively borrowed
-    const activeBorrowing = await Borrowing.findOne({ where: { book_qr_id, borrowing_status: { [Op.in]: [BorrowingStatus.PENDING, BorrowingStatus.APPROVED, BorrowingStatus.BORROWED, BorrowingStatus.RESERVED, BorrowingStatus.LATE] } }, transaction: t });
+    const activeBorrowing = await Borrowing.findOne({ where: { book_qr_id, borrowing_status: { [Op.in]: [BorrowingStatus.PENDING, BorrowingStatus.APPROVED, BorrowingStatus.BORROWED, BorrowingStatus.LATE] } }, transaction: t });
     if (activeBorrowing) throw Object.assign(new Error('This physical book is already borrowed'), { statusCode: 409 });
 
     // Check borrowing limits
@@ -99,6 +108,14 @@ const approveBorrowing = asyncHandler(async (req: Request, res: Response): Promi
   });
 
   await createAuditLog(buildAuditFromRequest(req, AuditActionType.APPROVE, TABLE_NAMES.BORROWINGS, result.borrowing_id, { borrowing_status: BorrowingStatus.PENDING }, { borrowing_status: BorrowingStatus.BORROWED }));
+  
+  try {
+    const bookTitle = result.book_qr?.book?.book_title || 'Buku';
+    await sendBorrowingEvent(result.user_id, bookTitle, 'approved');
+  } catch (err: any) {
+    logger.error('Failed to send approve notification:', err);
+  }
+
   apiResponse.success(res, 'Borrowing approved', result);
 });
 
@@ -149,6 +166,14 @@ const returnBorrowing = asyncHandler(async (req: Request, res: Response): Promis
   });
 
   await createAuditLog(buildAuditFromRequest(req, AuditActionType.RETURN, TABLE_NAMES.BORROWINGS, result.borrowing_id));
+
+  try {
+    const bookTitle = result.book_qr?.book?.book_title || 'Buku';
+    await sendReturnEvent(result.user_id, bookTitle, result.late_penalty_amount);
+  } catch (err: any) {
+    logger.error('Failed to send return notification:', err);
+  }
+
   apiResponse.success(res, 'Book returned successfully', result);
 });
 
@@ -220,43 +245,18 @@ const extendBorrowing = asyncHandler(async (req: Request, res: Response): Promis
   });
 
   await createAuditLog(buildAuditFromRequest(req, AuditActionType.EXTEND, TABLE_NAMES.BORROWINGS, result.borrowing_id));
+
+  try {
+    const bookTitle = result.book_qr?.book?.book_title || 'Buku';
+    await sendBorrowingEvent(result.user_id, bookTitle, 'extended');
+  } catch (err: any) {
+    logger.error('Failed to send extend notification:', err);
+  }
+
   apiResponse.success(res, 'Borrowing extended', result);
 });
 
-/**
- * POST /api/v1/borrowings/reserve
- * Reserve a book.
- */
-const reserveBook = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const { book_qr_id } = req.body;
-  const userId = req.user!.user_id;
 
-  const result = await sequelize.transaction(async (t: Transaction) => {
-    const bookQr = await BookQr.findByPk(book_qr_id, { lock: Transaction.LOCK.UPDATE, transaction: t, include: [{ association: 'book' }] });
-    if (!bookQr) throw Object.assign(new Error('Book QR not found'), { statusCode: 404 });
-
-    const book = (bookQr as any).book;
-    if (book && !isWithinScope(req.user, book)) {
-      throw Object.assign(new Error('Cannot reserve book outside your school scope'), { statusCode: 403 });
-    }
-
-    const activeBorrowing = await Borrowing.findOne({ where: { book_qr_id, borrowing_status: { [Op.in]: [BorrowingStatus.PENDING, BorrowingStatus.APPROVED, BorrowingStatus.BORROWED, BorrowingStatus.RESERVED, BorrowingStatus.LATE] } }, transaction: t });
-    if (activeBorrowing) throw Object.assign(new Error('This book copy is not available'), { statusCode: 409 });
-
-    const borrowingCode = generateBorrowingCode();
-    const borrowing = await Borrowing.create({ borrowing_code: borrowingCode, user_id: userId, book_qr_id, borrowing_status: BorrowingStatus.RESERVED, late_penalty_amount: 0 }, { transaction: t });
-
-    // Sync stock
-    if (book) {
-      await syncBookStock(book.book_id, t);
-    }
-
-    return borrowing;
-  });
-
-  await createAuditLog(buildAuditFromRequest(req, AuditActionType.RESERVE, TABLE_NAMES.BORROWINGS, result.borrowing_id));
-  apiResponse.created(res, 'Book reserved', result);
-});
 
 /**
  * GET /api/v1/borrowings
@@ -278,13 +278,28 @@ const listBorrowings = asyncHandler(async (req: Request, res: Response): Promise
 
   // Regional scope: filter through book_qr -> book -> school
   const userRole = req.user!.user_role as UserRole;
-  const regionFilter = buildRegionalFilter(req.user);
+  
+  // Allow query parameter overrides if they are within the user's scope
+  const queryRegencyId = req.query.regency_id ? parseInt(req.query.regency_id as string, 10) : undefined;
+  const queryDistrictId = req.query.district_id ? parseInt(req.query.district_id as string, 10) : undefined;
+  const querySchoolId = req.query.school_id ? parseInt(req.query.school_id as string, 10) : undefined;
 
-  // Build school-level where for the nested include
   const schoolWhere: any = {};
-  if (regionFilter.school_id) schoolWhere.school_id = regionFilter.school_id;
-  else if (regionFilter.district_id) schoolWhere.district_id = regionFilter.district_id;
-  else if (regionFilter.regency_id) schoolWhere.regency_id = regionFilter.regency_id;
+
+  if (userRole === UserRole.SUPER_ADMIN) {
+    if (querySchoolId) schoolWhere.school_id = querySchoolId;
+    else if (queryDistrictId) schoolWhere.district_id = queryDistrictId;
+    else if (queryRegencyId) schoolWhere.regency_id = queryRegencyId;
+  } else if (userRole === UserRole.REGENCY_ADMIN) {
+    schoolWhere.regency_id = req.user!.regency_id;
+    if (querySchoolId) schoolWhere.school_id = querySchoolId;
+    else if (queryDistrictId) schoolWhere.district_id = queryDistrictId;
+  } else if (userRole === UserRole.DISTRICT_ADMIN) {
+    schoolWhere.district_id = req.user!.district_id;
+    if (querySchoolId) schoolWhere.school_id = querySchoolId;
+  } else if (userRole === UserRole.SCHOOL_ADMIN || userRole === UserRole.STUDENT_MEMBER) {
+    schoolWhere.school_id = req.user!.school_id;
+  }
 
   // For students, also limit to their own borrowings
   if (userRole === UserRole.STUDENT_MEMBER) {
@@ -307,7 +322,17 @@ const listBorrowings = asyncHandler(async (req: Request, res: Response): Promise
     bookInclude.required = true;
   }
 
-  const { count, rows } = await Borrowing.findAndCountAll({ where, include: [{ association: 'borrower', attributes: ['user_id', 'full_name', 'email_address', 'student_id_number', 'class_name'] }, { association: 'book_qr', required: Object.keys(schoolWhere).length > 0, paranoid: false, include: [bookInclude] }, { association: 'approved_by', attributes: ['user_id', 'full_name'] }], order: [[pagination.sortBy, pagination.sortOrder]], limit: pagination.limit, offset: pagination.offset });
+  const { count, rows } = await Borrowing.findAndCountAll({
+    where,
+    include: [
+      { association: 'borrower', attributes: ['user_id', 'full_name', 'email_address', 'student_id_number', 'class_name'], required: false },
+      { association: 'book_qr', required: Object.keys(schoolWhere).length > 0, paranoid: false, include: [bookInclude] },
+      { association: 'approved_by', attributes: ['user_id', 'full_name'], required: false }
+    ],
+    order: [[pagination.sortBy, pagination.sortOrder]],
+    limit: pagination.limit,
+    offset: pagination.offset
+  });
 
   apiResponse.paginated(res, 'Borrowings retrieved', rows, buildPaginationResult(count, pagination));
 });
@@ -377,7 +402,15 @@ const quickBorrow = asyncHandler(async (req: Request, res: Response): Promise<vo
       include: [{ association: 'book', attributes: ['book_id', 'book_title', 'school_id', 'available_stock'] }],
     });
     if (!bookQr) throw Object.assign(new Error('Book QR not found'), { statusCode: 404 });
-    if (bookQr.qr_status !== QrStatus.ACTIVE) throw Object.assign(new Error(`QR code is ${bookQr.qr_status}`), { statusCode: 400 });
+    if (bookQr.qr_status !== QrStatus.ACTIVE) {
+      let statusMsg = 'Buku tidak tersedia untuk dipinjam';
+      if (bookQr.qr_status === QrStatus.DAMAGED) statusMsg = 'Buku sedang rusak';
+      else if (bookQr.qr_status === QrStatus.LOST) statusMsg = 'Buku telah hilang';
+      else if (bookQr.qr_status === QrStatus.MAINTENANCE) statusMsg = 'Buku sedang dalam perbaikan/perawatan';
+      else if (bookQr.qr_status === QrStatus.BORROWED) statusMsg = 'Buku sedang dipinjam';
+      else if (bookQr.qr_status === QrStatus.INACTIVE) statusMsg = 'Buku tidak aktif';
+      throw Object.assign(new Error(statusMsg), { statusCode: 400 });
+    }
 
     const book = (bookQr as any).book;
     if (!book) throw Object.assign(new Error('Associated book not found'), { statusCode: 404 });
@@ -390,11 +423,10 @@ const quickBorrow = asyncHandler(async (req: Request, res: Response): Promise<vo
       throw Object.assign(new Error('Cannot borrow for a student outside your regional scope'), { statusCode: 403 });
     }
 
-    // Check if QR is already actively borrowed
     const activeBorrowing = await Borrowing.findOne({
       where: {
         book_qr_id: bookQr.book_qr_id,
-        borrowing_status: { [Op.in]: [BorrowingStatus.PENDING, BorrowingStatus.APPROVED, BorrowingStatus.BORROWED, BorrowingStatus.RESERVED, BorrowingStatus.LATE] },
+        borrowing_status: { [Op.in]: [BorrowingStatus.PENDING, BorrowingStatus.APPROVED, BorrowingStatus.BORROWED, BorrowingStatus.LATE] },
       },
       transaction: t,
     });
@@ -620,4 +652,111 @@ const searchStudent = asyncHandler(async (req: Request, res: Response): Promise<
   apiResponse.success(res, 'Students found', enriched);
 });
 
-export { createBorrowing, approveBorrowing, returnBorrowing, extendBorrowing, reserveBook, listBorrowings, getBorrowing, quickBorrow, quickReturn, searchStudent };
+/**
+ * DELETE /api/v1/borrowings/:borrowing_id
+ * Admin deletes a borrowing transaction.
+ */
+const deleteBorrowing = asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const { borrowing_id } = req.params;
+
+  const result = await sequelize.transaction(async (t: Transaction) => {
+    const borrowing = await Borrowing.findByPk(borrowing_id as string, {
+      lock: Transaction.LOCK.UPDATE,
+      transaction: t,
+      include: [{ association: 'book_qr', include: [{ association: 'book', include: [{ association: 'school', attributes: ['school_id', 'district_id', 'regency_id'] }] }] }]
+    });
+
+    if (!borrowing) throw Object.assign(new Error('Borrowing not found'), { statusCode: 404 });
+
+    const book = (borrowing as any).book_qr?.book;
+    if (book && !isWithinScope(req.user, book)) {
+      throw Object.assign(new Error('Cannot delete borrowing outside your regional scope'), { statusCode: 403 });
+    }
+
+    const oldValues = borrowing.toJSON();
+
+    // If borrowing was active, restore BookQr status to active
+    if ([BorrowingStatus.PENDING, BorrowingStatus.APPROVED, BorrowingStatus.BORROWED, BorrowingStatus.LATE].includes(borrowing.borrowing_status as any)) {
+      const bookQr = (borrowing as any).book_qr;
+      if (bookQr) {
+        await bookQr.update({ qr_status: QrStatus.ACTIVE }, { transaction: t });
+      }
+    }
+
+    await borrowing.destroy({ transaction: t });
+
+    if (book) {
+      await syncBookStock(book.book_id, t);
+    }
+
+    return { borrowing_id: borrowing.borrowing_id, oldValues };
+  });
+
+  await createAuditLog(buildAuditFromRequest(req, AuditActionType.DELETE, TABLE_NAMES.BORROWINGS, result.borrowing_id, result.oldValues));
+  apiResponse.success(res, 'Borrowing transaction deleted successfully');
+});
+
+/**
+ * DELETE /api/v1/borrowings
+ * Super Admin bulk deletes multiple borrowing transactions.
+ */
+const bulkDeleteBorrowings = asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const { borrowing_ids } = req.body;
+  if (!borrowing_ids || !Array.isArray(borrowing_ids) || borrowing_ids.length === 0) {
+    apiResponse.badRequest(res, 'borrowing_ids array is required and must not be empty');
+    return;
+  }
+
+  // Only SUPER_ADMIN can bulk delete
+  if (req.user!.user_role !== UserRole.SUPER_ADMIN) {
+    apiResponse.forbidden(res, 'Only Super Admin can bulk delete borrowing transactions');
+    return;
+  }
+
+  await sequelize.transaction(async (t: Transaction) => {
+    const borrowings = await Borrowing.findAll({
+      where: { borrowing_id: borrowing_ids },
+      lock: Transaction.LOCK.UPDATE,
+      transaction: t,
+      include: [{ association: 'book_qr', include: [{ association: 'book' }] }]
+    });
+
+    if (borrowings.length === 0) {
+      throw Object.assign(new Error('No borrowings found with the provided IDs'), { statusCode: 404 });
+    }
+
+    const uniqueBookIds = new Set<number>();
+
+    for (const borrowing of borrowings) {
+      // If borrowing was active, restore BookQr status to active
+      if ([BorrowingStatus.PENDING, BorrowingStatus.APPROVED, BorrowingStatus.BORROWED, BorrowingStatus.LATE].includes(borrowing.borrowing_status as any)) {
+        const bookQr = (borrowing as any).book_qr;
+        if (bookQr) {
+          await bookQr.update({ qr_status: QrStatus.ACTIVE }, { transaction: t });
+        }
+      }
+
+      const book = (borrowing as any).book_qr?.book;
+      if (book) {
+        uniqueBookIds.add(book.book_id);
+      }
+
+      await createAuditLog(buildAuditFromRequest(req, AuditActionType.DELETE, TABLE_NAMES.BORROWINGS, borrowing.borrowing_id, borrowing.toJSON()));
+    }
+
+    // Destroy all the borrowings
+    await Borrowing.destroy({
+      where: { borrowing_id: borrowings.map(b => b.borrowing_id) },
+      transaction: t
+    });
+
+    // Sync stocks for all unique books affected
+    for (const bookId of uniqueBookIds) {
+      await syncBookStock(bookId, t);
+    }
+  });
+
+  apiResponse.success(res, 'Selected borrowing transactions deleted successfully');
+});
+
+export { createBorrowing, approveBorrowing, returnBorrowing, extendBorrowing, listBorrowings, getBorrowing, quickBorrow, quickReturn, searchStudent, deleteBorrowing, bulkDeleteBorrowings };
