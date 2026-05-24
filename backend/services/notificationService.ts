@@ -167,6 +167,34 @@ const sendLateWarning = async (
 };
 
 /**
+ * Send book availability notification.
+ */
+const sendAvailabilityNotice = async (
+  userId: number,
+  bookTitle: string,
+  email?: string
+): Promise<void> => {
+  await createInAppNotification({
+    user_id: userId,
+    notification_title: 'Book Now Available',
+    notification_message: `The book "${bookTitle}" you reserved is now available. Please pick it up within 48 hours.`,
+    notification_type: NotificationType.AVAILABILITY_NOTICE,
+  });
+
+  if (email) {
+    sendEmailNotification(
+      email,
+      `Book Available - ${bookTitle}`,
+      `
+        <h2>Book Now Available</h2>
+        <p>The book <strong>"${bookTitle}"</strong> you reserved is now available for pickup.</p>
+        <p>Please collect it within 48 hours before the reservation expires.</p>
+      `
+    ).catch((err: any) => logger.error('Failed to send book availability email in background', { error: err.message }));
+  }
+};
+
+/**
  * Send borrowing event notification (borrow approved, etc.).
  */
 const sendBorrowingEvent = async (
@@ -175,9 +203,9 @@ const sendBorrowingEvent = async (
   eventType: 'approved' | 'created' | 'quick_borrow' | 'extended'
 ): Promise<void> => {
   const messages: Record<string, string> = {
-    approved: `Peminjaman buku "${bookTitle}" telah disetujui. Silakan ambil buku di perpustakaan.`,
-    created: `Permintaan peminjaman buku "${bookTitle}" berhasil dibuat. Menunggu persetujuan admin.`,
-    quick_borrow: `Buku "${bookTitle}" berhasil dipinjamkan kepada Anda oleh admin.`,
+    approved: `Peminjaman buku "${bookTitle}" telah disetujui.`,
+    created: `Permintaan peminjaman buku "${bookTitle}" berhasil dibuat.`,
+    quick_borrow: `Buku "${bookTitle}" berhasil dipinjamkan kepada Anda.`,
     extended: `Peminjaman buku "${bookTitle}" telah diperpanjang.`,
   };
 
@@ -278,7 +306,7 @@ const runDailyBorrowingReminders = async (): Promise<void> => {
   logger.info('Starting daily borrowing reminders processing...');
   try {
     const today = new Date();
-    
+
     // Find all active borrowings (borrowed or late)
     const activeBorrowings = await Borrowing.findAll({
       where: {
@@ -340,7 +368,7 @@ const runDailyBorrowingReminders = async (): Promise<void> => {
           notification_message: `Buku "${bookTitle}" harus dikembalikan dalam 2 hari (pada ${formattedDate}).`,
           notification_type: NotificationType.DUE_REMINDER,
         });
-        
+
         // Emit via socket
         try {
           const { emitNotification } = require('./socketService');
@@ -350,7 +378,7 @@ const runDailyBorrowingReminders = async (): Promise<void> => {
             message: `Buku "${bookTitle}" harus dikembalikan dalam 2 hari (pada ${formattedDate}).`,
             book_title: bookTitle,
           });
-        } catch {}
+        } catch { }
 
         notificationsCount++;
       } else if (diffDays === 1) {
@@ -371,7 +399,7 @@ const runDailyBorrowingReminders = async (): Promise<void> => {
             message: `Buku "${bookTitle}" harus dikembalikan besok (pada ${formattedDate}).`,
             book_title: bookTitle,
           });
-        } catch {}
+        } catch { }
 
         notificationsCount++;
       } else if (diffDays === 0) {
@@ -392,7 +420,7 @@ const runDailyBorrowingReminders = async (): Promise<void> => {
             message: `Hari ini adalah batas waktu pengembalian buku "${bookTitle}".`,
             book_title: bookTitle,
           });
-        } catch {}
+        } catch { }
 
         notificationsCount++;
       } else if (diffDays < 0) {
@@ -414,7 +442,7 @@ const runDailyBorrowingReminders = async (): Promise<void> => {
             message: `Buku "${bookTitle}" terlambat dikembalikan. Terlambat ${daysLate} hari.`,
             book_title: bookTitle,
           });
-        } catch {}
+        } catch { }
 
         notificationsCount++;
       }
@@ -431,6 +459,7 @@ export {
   sendEmailNotification,
   sendDueReminder,
   sendLateWarning,
+  sendAvailabilityNotice,
   sendBorrowingEvent,
   sendReturnEvent,
   sendStockAnomalyAlert,

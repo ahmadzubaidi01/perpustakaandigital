@@ -92,7 +92,7 @@ const getBackendUrl = () => {
   } catch (e) {
     // Ignore error
   }
-  return Platform.OS === 'android' ? 'http://192.168.1.147:5000/api' : 'http://localhost:5000/api';
+  return Platform.OS === 'android' ? 'http://192.168.56.1:5000/api' : 'http://localhost:5000/api';
 };
 
 export const API_BASE_URL = __DEV__
