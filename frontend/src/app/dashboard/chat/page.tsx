@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { MessageSquare, Send, Search, Plus, Loader2, UserCircle, Circle } from 'lucide-react';
+import { MessageSquare, Send, Search, Plus, Loader2, UserCircle, Circle, ChevronLeft } from 'lucide-react';
 import { chatAPI } from '@/lib/api';
 import { useAuthStore, useChatStore, type ChatConversation, type ChatMessage } from '@/lib/store';
 import { initSocket, getSocket, joinConversation, leaveConversation, emitTyping, emitReadReceipt } from '@/lib/socket';
@@ -57,6 +57,7 @@ export default function ChatPage() {
   const [recipients, setRecipients] = useState<any[]>([]);
   const [loadingRecipients, setLoadingRecipients] = useState(false);
   const [recipientSearch, setRecipientSearch] = useState('');
+  const [showChatAreaMobile, setShowChatAreaMobile] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Load conversations
@@ -137,6 +138,7 @@ export default function ChatPage() {
       const conv = res.data.data;
       setShowNewChat(false);
       setActiveConversation(conv.conversation_id);
+      setShowChatAreaMobile(true);
       loadConversations();
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Gagal memulai percakapan');
@@ -180,7 +182,9 @@ export default function ChatPage() {
 
       <div className="mt-6 flex bg-card border border-border rounded-2xl overflow-hidden shadow-sm" style={{ height: 'calc(100vh - 220px)', minHeight: '500px' }}>
         {/* Sidebar - Conversation List */}
-        <div className="w-80 border-r border-border flex flex-col shrink-0 bg-card">
+        <div className={`w-full md:w-80 border-r border-border flex flex-col shrink-0 bg-card ${
+          showChatAreaMobile ? 'hidden md:flex' : 'flex'
+        }`}>
           <div className="p-3 border-b border-border space-y-2">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-foreground">Percakapan</h3>
@@ -207,7 +211,10 @@ export default function ChatPage() {
                 return (
                   <button
                     key={conv.conversation_id}
-                    onClick={() => setActiveConversation(conv.conversation_id)}
+                    onClick={() => {
+                      setActiveConversation(conv.conversation_id);
+                      setShowChatAreaMobile(true);
+                    }}
                     className={`w-full text-left px-4 py-3 border-b border-border transition-colors flex items-center gap-3 ${
                       isActive ? 'bg-primary/5 border-l-2 border-l-primary' : 'hover:bg-muted/40'
                     }`}
@@ -251,11 +258,21 @@ export default function ChatPage() {
         </div>
 
         {/* Main Chat Area */}
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className={`flex-1 flex flex-col min-w-0 ${
+          !showChatAreaMobile ? 'hidden md:flex' : 'flex'
+        }`}>
           {activeConversationId && otherUser ? (
             <>
               {/* Chat Header */}
               <div className="px-5 py-3 border-b border-border flex items-center gap-3 shrink-0 bg-card">
+                <button
+                  type="button"
+                  onClick={() => setShowChatAreaMobile(false)}
+                  className="md:hidden p-1.5 rounded-xl hover:bg-muted text-muted-foreground hover:text-foreground shrink-0 active:scale-95 transition-all outline-none"
+                  aria-label="Kembali ke percakapan"
+                >
+                  <ChevronLeft size={20} />
+                </button>
                 <div className="relative">
                   <div className="w-9 h-9 rounded-xl bg-linear-to-br from-primary to-primary/80 text-primary-foreground flex items-center justify-center text-sm font-bold">
                     {otherUser.full_name?.charAt(0)?.toUpperCase() || '?'}
