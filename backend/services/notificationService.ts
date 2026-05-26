@@ -32,7 +32,7 @@ interface NotificationPayload {
  */
 const createInAppNotification = async (payload: NotificationPayload): Promise<void> => {
   try {
-    await Notification.create({
+    const notification = await Notification.create({
       user_id: payload.user_id,
       notification_title: payload.notification_title,
       notification_message: payload.notification_message,
@@ -45,6 +45,21 @@ const createInAppNotification = async (payload: NotificationPayload): Promise<vo
       user_id: payload.user_id,
       type: payload.notification_type,
     });
+
+    // Automatically emit via socket.io to the recipient in real-time
+    try {
+      const { emitNotification } = require('./socketService');
+      emitNotification(payload.user_id, {
+        notification_id: notification.notification_id,
+        notification_title: payload.notification_title,
+        notification_message: payload.notification_message,
+        notification_type: payload.notification_type,
+        is_read: false,
+        created_at: (notification as any).createdAt || new Date(),
+      });
+    } catch (socketErr: any) {
+      logger.warn('Failed to emit notification via socket', { error: socketErr.message });
+    }
   } catch (error: any) {
     logger.error('Failed to create in-app notification', {
       error: error.message,
@@ -215,17 +230,6 @@ const sendBorrowingEvent = async (
     notification_message: messages[eventType] || `Update peminjaman: ${bookTitle}`,
     notification_type: NotificationType.BORROWING_EVENT,
   });
-
-  // Emit via socket if available
-  try {
-    const { emitNotification } = require('./socketService');
-    emitNotification(userId, {
-      type: 'borrowing_event',
-      title: 'Peminjaman Buku',
-      message: messages[eventType] || `Update peminjaman: ${bookTitle}`,
-      book_title: bookTitle,
-    });
-  } catch { /* Socket not initialized yet */ }
 };
 
 /**
@@ -246,16 +250,6 @@ const sendReturnEvent = async (
     notification_message: `Buku "${bookTitle}" berhasil dikembalikan.${penaltyInfo}`,
     notification_type: NotificationType.RETURN_EVENT,
   });
-
-  try {
-    const { emitNotification } = require('./socketService');
-    emitNotification(userId, {
-      type: 'return_event',
-      title: 'Pengembalian Buku',
-      message: `Buku "${bookTitle}" dikembalikan.${penaltyInfo}`,
-      penalty_amount: penaltyAmount,
-    });
-  } catch { /* Socket not initialized */ }
 };
 
 /**
@@ -368,18 +362,6 @@ const runDailyBorrowingReminders = async (): Promise<void> => {
           notification_message: `Buku "${bookTitle}" harus dikembalikan dalam 2 hari (pada ${formattedDate}).`,
           notification_type: NotificationType.DUE_REMINDER,
         });
-
-        // Emit via socket
-        try {
-          const { emitNotification } = require('./socketService');
-          emitNotification(borrowerId, {
-            type: 'due_reminder',
-            title: 'Pengingat Pengembalian Buku',
-            message: `Buku "${bookTitle}" harus dikembalikan dalam 2 hari (pada ${formattedDate}).`,
-            book_title: bookTitle,
-          });
-        } catch { }
-
         notificationsCount++;
       } else if (diffDays === 1) {
         // 1 day before
@@ -389,18 +371,6 @@ const runDailyBorrowingReminders = async (): Promise<void> => {
           notification_message: `Buku "${bookTitle}" harus dikembalikan besok (pada ${formattedDate}).`,
           notification_type: NotificationType.DUE_REMINDER,
         });
-
-        // Emit via socket
-        try {
-          const { emitNotification } = require('./socketService');
-          emitNotification(borrowerId, {
-            type: 'due_reminder',
-            title: 'Pengingat Pengembalian Buku',
-            message: `Buku "${bookTitle}" harus dikembalikan besok (pada ${formattedDate}).`,
-            book_title: bookTitle,
-          });
-        } catch { }
-
         notificationsCount++;
       } else if (diffDays === 0) {
         // Today
@@ -410,18 +380,6 @@ const runDailyBorrowingReminders = async (): Promise<void> => {
           notification_message: `Hari ini adalah batas waktu pengembalian buku "${bookTitle}".`,
           notification_type: NotificationType.DUE_REMINDER,
         });
-
-        // Emit via socket
-        try {
-          const { emitNotification } = require('./socketService');
-          emitNotification(borrowerId, {
-            type: 'due_reminder',
-            title: 'Batas Waktu Pengembalian',
-            message: `Hari ini adalah batas waktu pengembalian buku "${bookTitle}".`,
-            book_title: bookTitle,
-          });
-        } catch { }
-
         notificationsCount++;
       } else if (diffDays < 0) {
         // Overdue! Compute positive days late
@@ -432,18 +390,6 @@ const runDailyBorrowingReminders = async (): Promise<void> => {
           notification_message: `Buku "${bookTitle}" terlambat dikembalikan. Terlambat ${daysLate} hari.`,
           notification_type: NotificationType.LATE_WARNING,
         });
-
-        // Emit via socket
-        try {
-          const { emitNotification } = require('./socketService');
-          emitNotification(borrowerId, {
-            type: 'late_warning',
-            title: 'Buku Terlambat Dikembalikan',
-            message: `Buku "${bookTitle}" terlambat dikembalikan. Terlambat ${daysLate} hari.`,
-            book_title: bookTitle,
-          });
-        } catch { }
-
         notificationsCount++;
       }
     }
@@ -468,16 +414,6 @@ const sendChatMessageNotification = async (
     notification_message: messageText,
     notification_type: NotificationType.ADMIN_MESSAGE,
   });
-
-  try {
-    const { emitNotification } = require('./socketService');
-    emitNotification(recipientId, {
-      type: 'admin_message',
-      title: `Pesan Baru dari ${senderName}`,
-      message: messageText,
-      sender_name: senderName,
-    });
-  } catch { /* Socket not initialized */ }
 };
 
 export {

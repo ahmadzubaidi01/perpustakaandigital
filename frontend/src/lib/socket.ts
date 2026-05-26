@@ -5,7 +5,7 @@ import Cookies from 'js-cookie';
 
 const isDev = process.env.NODE_ENV === 'development';
 const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 
-  (isDev ? 'http://localhost:5000' : 'https://www.perpustakaanahmad.my.id');
+  (isDev ? 'http://localhost:5000' : 'https://api.perpustakaanahmad.my.id');
 
 let socket: Socket | null = null;
 

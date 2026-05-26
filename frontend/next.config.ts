@@ -24,11 +24,16 @@ const nextConfig: NextConfig = {
         hostname: 'www.perpustakaanahmad.my.id',
         pathname: '/uploads/**',
       },
+      {
+        protocol: 'https',
+        hostname: 'api.perpustakaanahmad.my.id',
+        pathname: '/uploads/**',
+      },
     ],
   },
   async rewrites() {
     const isDev = process.env.NODE_ENV === 'development';
-    const BACKEND_URL = isDev ? 'http://localhost:5000' : 'https://www.perpustakaanahmad.my.id';
+    const BACKEND_URL = isDev ? 'http://localhost:5000' : 'https://api.perpustakaanahmad.my.id';
     return [
       {
         source: '/api/:path*',
