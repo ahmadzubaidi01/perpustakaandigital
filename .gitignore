@@ -12,3 +12,4 @@ uploads/
 *.tgz
 coverage/
 .env.production.example
+*.zip

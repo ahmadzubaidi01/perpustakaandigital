@@ -1,4 +1,4 @@
-import multer from 'multer';
+ import multer from 'multer';
 import path from 'path';
 import crypto from 'crypto';
 import { Request } from 'express';
@@ -64,41 +64,30 @@ const fileFilter = (_req: Request, file: Express.Multer.File, cb: multer.FileFil
 /**
  * Upload middleware for single image files.
  */
-const uploadSingle = (fieldName: string) => {
+const uploadSingle: any = (fieldName: string) => {
   return multer({
     storage,
-    fileFilter,
     limits: {
-      fileSize: 2 * 1024 * 1024, // 2MB Limit
       files: 1,
     },
   }).single(fieldName);
 };
 
-/**
- * Upload middleware for multiple image files.
- */
-const uploadMultiple = (fieldName: string, maxCount: number = 5) => {
+const uploadMultiple: any = (
+  fieldName: string,
+  maxCount: number = 5
+) => {
   return multer({
     storage,
-    fileFilter,
     limits: {
-      fileSize: 2 * 1024 * 1024, // 2MB Limit
       files: maxCount,
     },
   }).array(fieldName, maxCount);
 };
 
-/**
- * Upload middleware for specific fields.
- */
-const uploadFields = (fields: multer.Field[]) => {
+const uploadFields: any = (fields: multer.Field[]) => {
   return multer({
     storage,
-    fileFilter,
-    limits: {
-      fileSize: 2 * 1024 * 1024, // 2MB Limit
-    },
   }).fields(fields);
 };
 

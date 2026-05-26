@@ -3,7 +3,9 @@
 import { io, Socket } from 'socket.io-client';
 import Cookies from 'js-cookie';
 
-const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5000';
+const isDev = process.env.NODE_ENV === 'development';
+const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 
+  (isDev ? 'http://localhost:5000' : 'https://www.perpustakaanahmad.my.id');
 
 let socket: Socket | null = null;
 
@@ -18,7 +20,7 @@ export const initSocket = (): Socket | null => {
 
   socket = io(SOCKET_URL, {
     auth: { token },
-    transports: ['websocket', 'polling'],
+    transports: ['polling', 'websocket'],
     reconnection: true,
     reconnectionAttempts: 10,
     reconnectionDelay: 1000,

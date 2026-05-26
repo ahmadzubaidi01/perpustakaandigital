@@ -67,6 +67,14 @@ const createBorrowing = asyncHandler(async (req: Request, res: Response): Promis
   });
 
   await createAuditLog(buildAuditFromRequest(req, AuditActionType.BORROW, TABLE_NAMES.BORROWINGS, result.borrowing.borrowing_id, null, { borrowing_code: result.borrowing.borrowing_code, book_qr_id }));
+  
+  // Dispatch 'created' borrowing notification to the student
+  try {
+    await sendBorrowingEvent(userId, result.book_title, 'created');
+  } catch (err: any) {
+    logger.error('Failed to trigger borrowing created notification:', err.message);
+  }
+
   apiResponse.created(res, 'Borrowing request created', result.borrowing);
 });
 
@@ -263,9 +271,14 @@ const extendBorrowing = asyncHandler(async (req: Request, res: Response): Promis
  * List borrowings with pagination, filtering, and sorting.
  */
 const listBorrowings = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const pagination = parsePaginationParams(req, 'created_at', ['created_at', 'borrowed_at', 'due_date', 'borrowing_status']);
+  const pagination = parsePaginationParams(req, 'created_at', ['created_at', 'borrowed_at', 'due_date', 'borrowing_status', 'updated_at']);
   const filters = parseFilterParams(req, ['borrowing_status', 'penalty_status', 'user_id']);
   const where: any = { ...filters };
+
+  // Support incremental sync updated_after
+  if (req.query.updated_after) {
+    where.updated_at = { [Op.gt]: new Date(req.query.updated_after as string) };
+  }
 
   const { search } = req.query;
   if (search) {
@@ -304,6 +317,41 @@ const listBorrowings = asyncHandler(async (req: Request, res: Response): Promise
   // For students, also limit to their own borrowings
   if (userRole === UserRole.STUDENT_MEMBER) {
     where.user_id = req.user!.user_id;
+  }
+
+  // Check if it's a sync request
+  const isSync = req.query.sync === 'true';
+
+  if (isSync) {
+    // Highly optimized lightweight sync query
+    const { count, rows } = await Borrowing.findAndCountAll({
+      where,
+      attributes: [
+        'borrowing_id', 'borrowing_code', 'user_id', 'book_qr_id', 'borrowed_at',
+        'due_date', 'returned_at', 'late_penalty_amount', 'penalty_status',
+        'borrowing_status', 'approved_by_user_id', 'created_at', 'updated_at'
+      ],
+      include: [
+        { association: 'borrower', attributes: ['user_id', 'full_name', 'class_name'], required: false },
+        { 
+          association: 'book_qr', 
+          required: Object.keys(schoolWhere).length > 0, 
+          paranoid: false, 
+          include: [{ 
+            association: 'book', 
+            attributes: ['book_id', 'book_title', 'school_id'], 
+            required: false, 
+            paranoid: false,
+            where: Object.keys(schoolWhere).length > 0 ? schoolWhere : undefined
+          }] 
+        }
+      ],
+      order: [[pagination.sortBy, pagination.sortOrder]],
+      limit: pagination.limit,
+      offset: pagination.offset,
+    });
+    apiResponse.paginated(res, 'Borrowings sync retrieved', rows, buildPaginationResult(count, pagination));
+    return;
   }
 
   const schoolInclude: any = { association: 'school', attributes: ['school_id', 'school_name', 'district_id', 'regency_id'] };

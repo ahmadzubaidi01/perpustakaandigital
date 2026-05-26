@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Bell, Check, CheckCheck, Trash, Inbox, AlertTriangle, AlertCircle, Info, Calendar } from 'lucide-react';
 import { notificationsAPI } from '@/lib/api';
+import { useNotificationStore } from '@/lib/store';
 import toast from 'react-hot-toast';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
@@ -58,7 +59,7 @@ const typeThemes: Record<string, NotificationTheme> = {
 
 export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<any[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const { unreadCount, setUnreadCount, decrementUnread } = useNotificationStore();
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
 
@@ -84,6 +85,7 @@ export default function NotificationsPage() {
   const markRead = async (id: number) => {
     try {
       await notificationsAPI.markRead(id);
+      decrementUnread();
       fetchNotifications();
     } catch {
       toast.error('Gagal menandai notifikasi telah dibaca.');
@@ -94,12 +96,14 @@ export default function NotificationsPage() {
     try {
       await notificationsAPI.markAllRead();
       toast.success('Semua notifikasi telah ditandai dibaca');
+      setUnreadCount(0);
       fetchNotifications();
     } catch {
       toast.error('Gagal menandai semua notifikasi.');
     }
   };
 
+  // Keep delete function for future API calls, but we will not render the button
   const handleDelete = async (id: number) => {
     try {
       await notificationsAPI.delete(id);
@@ -168,10 +172,11 @@ export default function NotificationsPage() {
               <Card
                 key={n.notification_id}
                 hoverable={!n.is_read}
+                onClick={() => !n.is_read && markRead(n.notification_id)}
                 className={`flex items-start gap-4 p-4 border-l-4 transition-all duration-200 ${
                   n.is_read 
                     ? 'opacity-60 border-l-muted-foreground/30 bg-muted/20' 
-                    : `${theme.border} bg-card shadow-sm hover:shadow-md`
+                    : `${theme.border} bg-card shadow-sm hover:shadow-md cursor-pointer`
                 }`}
               >
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${theme.bg}`}>
@@ -196,29 +201,6 @@ export default function NotificationsPage() {
                       timeStyle: 'short',
                     })}
                   </p>
-                </div>
-                
-                <div className="flex gap-2 shrink-0 self-center">
-                  {!n.is_read && (
-                    <Button
-                      size="icon"
-                      variant="outline"
-                      onClick={() => markRead(n.notification_id)}
-                      title="Tandai dibaca"
-                      className="h-8 w-8 rounded-lg"
-                    >
-                      <Check size={14} />
-                    </Button>
-                  )}
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => handleDelete(n.notification_id)}
-                    title="Hapus"
-                    className="h-8 w-8 text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg"
-                  >
-                    <Trash size={14} />
-                  </Button>
                 </div>
               </Card>
             );

@@ -5,6 +5,7 @@ let db: any = (global as any).sqliteDb || null;
 
 export interface CachedBook {
   book_id: number;
+  book_code?: string;
   book_title: string;
   author_name: string;
   book_status: string;
@@ -12,6 +13,51 @@ export interface CachedBook {
   total_stock: number;
   cover_image_url?: string | null;
   created_at?: string;
+  updated_at?: string;
+  deleted_at?: string | null;
+}
+
+export interface CachedStudent {
+  user_id: number;
+  student_id_number?: string | null;
+  full_name: string;
+  class_name?: string | null;
+  email_address: string;
+  phone_number?: string | null;
+  member_qr_uuid?: string | null;
+  school_id?: number | null;
+  updated_at?: string;
+  deleted_at?: string | null;
+}
+
+export interface CachedBorrowing {
+  borrowing_id: number;
+  borrowing_code: string;
+  user_id: number;
+  book_qr_id: number;
+  borrowed_at?: string | null;
+  due_date?: string | null;
+  returned_at?: string | null;
+  late_penalty_amount: number;
+  penalty_status?: string | null;
+  borrowing_status: string;
+  approved_by_user_id?: number | null;
+  book_id?: number | null;
+  book_title?: string | null;
+  borrower_name?: string | null;
+  borrower_class?: string | null;
+  updated_at?: string;
+}
+
+export interface CachedNotification {
+  notification_id: number;
+  notification_title: string;
+  notification_message: string;
+  notification_type: string;
+  is_read: number; // 0 or 1 in SQLite
+  created_at: string;
+  updated_at?: string;
+  deleted_at?: string | null;
 }
 
 export interface OfflineScan {
@@ -27,7 +73,7 @@ export interface OfflineScan {
 }
 
 /**
- * Handle database errors. If a JNI pointer/connection error is detected,
+ * Handle database errors. If a native pointer/connection error is detected,
  * resets the connection singleton so that it will self-heal and re-initialize on the next query.
  */
 const handleDatabaseError = (error: any, operationName: string) => {
@@ -51,35 +97,114 @@ const handleDatabaseError = (error: any, operationName: string) => {
  */
 export const initDatabase = (): void => {
   if (db) {
-    console.log('[SQLite] Database already initialized');
     return;
   }
   try {
     db = SQLite.openDatabaseSync('perpustakaan_digital.db');
+
+    const addColumnIfNeeded = (tableName: string, columnName: string, columnType: string) => {
+      try {
+        const info = db.getAllSync(`PRAGMA table_info(${tableName});`);
+        const hasColumn = info.some((col: any) => col.name === columnName);
+        if (!hasColumn) {
+          db.execSync(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnType};`);
+          console.log(`[SQLite] Added column ${columnName} to table ${tableName}`);
+        }
+      } catch (err) {
+        // Table may not exist yet, which is fine as CREATE TABLE will construct it with all columns.
+      }
+    };
+
+    // Perform self-healing schema migrations for existing tables
+    addColumnIfNeeded('books', 'book_code', 'TEXT');
+    addColumnIfNeeded('books', 'cover_image_url', 'TEXT');
+    addColumnIfNeeded('books', 'updated_at', 'TEXT');
+    addColumnIfNeeded('books', 'deleted_at', 'TEXT');
+    addColumnIfNeeded('students', 'member_qr_uuid', 'TEXT');
+    addColumnIfNeeded('students', 'updated_at', 'TEXT');
+    addColumnIfNeeded('students', 'deleted_at', 'TEXT');
+    addColumnIfNeeded('borrowings', 'updated_at', 'TEXT');
+    addColumnIfNeeded('notifications', 'updated_at', 'TEXT');
+    addColumnIfNeeded('notifications', 'deleted_at', 'TEXT');
     
-    // Create books cache table
+    // 1. Create books cache table with updated_at/deleted_at support
     db.execSync(`
       CREATE TABLE IF NOT EXISTS books (
         book_id INTEGER PRIMARY KEY,
+        book_code TEXT,
         book_title TEXT NOT NULL,
         author_name TEXT,
         book_status TEXT,
         available_stock INTEGER,
         total_stock INTEGER,
         cover_image_url TEXT,
-        created_at TEXT
+        created_at TEXT,
+        updated_at TEXT,
+        deleted_at TEXT
       );
     `);
+    db.execSync('CREATE INDEX IF NOT EXISTS idx_books_title ON books(book_title);');
+    db.execSync('CREATE INDEX IF NOT EXISTS idx_books_updated_at ON books(updated_at);');
 
-    // Self-healing migration for existing databases
-    try {
-      db.execSync('ALTER TABLE books ADD COLUMN cover_image_url TEXT;');
-      console.log('[SQLite] Migration successful: added cover_image_url column to books table');
-    } catch (e) {
-      // Column already exists, ignore
-    }
+    // 2. Create students cache table
+    db.execSync(`
+      CREATE TABLE IF NOT EXISTS students (
+        user_id INTEGER PRIMARY KEY,
+        student_id_number TEXT,
+        full_name TEXT NOT NULL,
+        class_name TEXT,
+        email_address TEXT,
+        phone_number TEXT,
+        member_qr_uuid TEXT,
+        school_id INTEGER,
+        updated_at TEXT,
+        deleted_at TEXT
+      );
+    `);
+    db.execSync('CREATE INDEX IF NOT EXISTS idx_students_name ON students(full_name);');
+    db.execSync('CREATE INDEX IF NOT EXISTS idx_students_nis ON students(student_id_number);');
+    db.execSync('CREATE INDEX IF NOT EXISTS idx_students_qr ON students(member_qr_uuid);');
 
-    // Create offline scan queue table
+    // 3. Create borrowings cache table
+    db.execSync(`
+      CREATE TABLE IF NOT EXISTS borrowings (
+        borrowing_id INTEGER PRIMARY KEY,
+        borrowing_code TEXT NOT NULL,
+        user_id INTEGER,
+        book_qr_id INTEGER,
+        borrowed_at TEXT,
+        due_date TEXT,
+        returned_at TEXT,
+        late_penalty_amount REAL,
+        penalty_status TEXT,
+        borrowing_status TEXT,
+        approved_by_user_id INTEGER,
+        book_id INTEGER,
+        book_title TEXT,
+        borrower_name TEXT,
+        borrower_class TEXT,
+        updated_at TEXT
+      );
+    `);
+    db.execSync('CREATE INDEX IF NOT EXISTS idx_borrowings_code ON borrowings(borrowing_code);');
+    db.execSync('CREATE INDEX IF NOT EXISTS idx_borrowings_user ON borrowings(user_id);');
+
+    // 4. Create notifications cache table
+    db.execSync(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        notification_id INTEGER PRIMARY KEY,
+        notification_title TEXT NOT NULL,
+        notification_message TEXT,
+        notification_type TEXT,
+        is_read INTEGER DEFAULT 0,
+        created_at TEXT,
+        updated_at TEXT,
+        deleted_at TEXT
+      );
+    `);
+    db.execSync('CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(is_read);');
+
+    // 5. Create offline scan queue table
     db.execSync(`
       CREATE TABLE IF NOT EXISTS offline_scans (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,9 +218,10 @@ export const initDatabase = (): void => {
         error_message TEXT
       );
     `);
+    db.execSync('CREATE INDEX IF NOT EXISTS idx_scans_status ON offline_scans(sync_status);');
 
     (global as any).sqliteDb = db;
-    console.log('[SQLite] Database initialized successfully');
+    console.log('[SQLite] All caching tables initialized successfully');
   } catch (error) {
     db = null;
     (global as any).sqliteDb = null;
@@ -104,7 +230,7 @@ export const initDatabase = (): void => {
 };
 
 /**
- * Check and ensure database connection is healthy before executing any queries.
+ * Check and ensure database connection is healthy.
  */
 const ensureDatabase = (): boolean => {
   if (!db) {
@@ -113,45 +239,47 @@ const ensureDatabase = (): boolean => {
   return db !== null;
 };
 
-/**
- * Cache books from online list into offline SQLite.
- */
+// ==========================================
+// BOOKS CACHE OPERATIONS (INCREMENTAL UPSERT)
+// ==========================================
 export const cacheBooks = (books: CachedBook[]): void => {
   if (!ensureDatabase()) return;
   try {
-    // Truncate existing books
-    db.execSync('DELETE FROM books;');
-
-    // Insert new books
     for (const book of books) {
+      if (book.deleted_at) {
+        // Soft delete or hard delete in local DB
+        db.runSync('DELETE FROM books WHERE book_id = ?;', book.book_id);
+        continue;
+      }
       db.runSync(
-        `INSERT INTO books (book_id, book_title, author_name, book_status, available_stock, total_stock, cover_image_url, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
+        `INSERT OR REPLACE INTO books (
+          book_id, book_code, book_title, author_name, book_status, 
+          available_stock, total_stock, cover_image_url, created_at, updated_at, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
         book.book_id,
+        book.book_code || '',
         book.book_title,
         book.author_name || '',
         book.book_status || 'available',
         book.available_stock || 0,
         book.total_stock || 0,
         book.cover_image_url || null,
-        book.created_at || new Date().toISOString()
+        book.created_at || new Date().toISOString(),
+        book.updated_at || new Date().toISOString()
       );
     }
-    console.log(`[SQLite] Cached ${books.length} books successfully`);
   } catch (error) {
     handleDatabaseError(error, 'cacheBooks');
   }
 };
 
-/**
- * Retrieve books from local SQLite cache.
- */
 export const getCachedBooks = (searchQuery?: string): CachedBook[] => {
   if (!ensureDatabase()) return [];
   try {
     if (searchQuery) {
       return db.getAllSync(
-        'SELECT * FROM books WHERE book_title LIKE ? OR author_name LIKE ? ORDER BY book_id DESC;',
+        'SELECT * FROM books WHERE book_title LIKE ? OR author_name LIKE ? OR book_code LIKE ? ORDER BY book_id DESC;',
+        `%${searchQuery}%`,
         `%${searchQuery}%`,
         `%${searchQuery}%`
       ) as CachedBook[];
@@ -163,9 +291,167 @@ export const getCachedBooks = (searchQuery?: string): CachedBook[] => {
   }
 };
 
-/**
- * Queue a scanned transaction offline when connection is unavailable.
- */
+// ==========================================
+// STUDENTS CACHE OPERATIONS
+// ==========================================
+export const cacheStudents = (students: CachedStudent[]): void => {
+  if (!ensureDatabase()) return;
+  try {
+    for (const student of students) {
+      if (student.deleted_at) {
+        db.runSync('DELETE FROM students WHERE user_id = ?;', student.user_id);
+        continue;
+      }
+      db.runSync(
+        `INSERT OR REPLACE INTO students (
+          user_id, student_id_number, full_name, class_name, 
+          email_address, phone_number, member_qr_uuid, school_id, updated_at, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
+        student.user_id,
+        student.student_id_number || null,
+        student.full_name,
+        student.class_name || null,
+        student.email_address,
+        student.phone_number || null,
+        student.member_qr_uuid || null,
+        student.school_id || null,
+        student.updated_at || new Date().toISOString()
+      );
+    }
+  } catch (error) {
+    handleDatabaseError(error, 'cacheStudents');
+  }
+};
+
+export const getCachedStudents = (searchQuery: string): CachedStudent[] => {
+  if (!ensureDatabase()) return [];
+  try {
+    return db.getAllSync(
+      `SELECT * FROM students 
+       WHERE full_name LIKE ? OR student_id_number LIKE ? OR member_qr_uuid = ?
+       ORDER BY full_name ASC LIMIT 20;`,
+      `%${searchQuery}%`,
+      `%${searchQuery}%`,
+      searchQuery
+    ) as CachedStudent[];
+  } catch (error) {
+    handleDatabaseError(error, 'getCachedStudents');
+    return [];
+  }
+};
+
+// ==========================================
+// BORROWINGS CACHE OPERATIONS
+// ==========================================
+export const cacheBorrowings = (borrowings: CachedBorrowing[]): void => {
+  if (!ensureDatabase()) return;
+  try {
+    for (const borrowing of borrowings) {
+      db.runSync(
+        `INSERT OR REPLACE INTO borrowings (
+          borrowing_id, borrowing_code, user_id, book_qr_id, borrowed_at, 
+          due_date, returned_at, late_penalty_amount, penalty_status, borrowing_status, 
+          approved_by_user_id, book_id, book_title, borrower_name, borrower_class, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        borrowing.borrowing_id,
+        borrowing.borrowing_code,
+        borrowing.user_id,
+        borrowing.book_qr_id,
+        borrowing.borrowed_at || null,
+        borrowing.due_date || null,
+        borrowing.returned_at || null,
+        borrowing.late_penalty_amount || 0,
+        borrowing.penalty_status || 'unpaid',
+        borrowing.borrowing_status,
+        borrowing.approved_by_user_id || null,
+        borrowing.book_id || (borrowing as any).book_qr?.book?.book_id || null,
+        borrowing.book_title || (borrowing as any).book_qr?.book?.book_title || null,
+        borrowing.borrower_name || (borrowing as any).borrower?.full_name || null,
+        borrowing.borrower_class || (borrowing as any).borrower?.class_name || null,
+        borrowing.updated_at || new Date().toISOString()
+      );
+    }
+  } catch (error) {
+    handleDatabaseError(error, 'cacheBorrowings');
+  }
+};
+
+export const getCachedBorrowings = (searchQuery?: string): CachedBorrowing[] => {
+  if (!ensureDatabase()) return [];
+  try {
+    if (searchQuery) {
+      return db.getAllSync(
+        `SELECT * FROM borrowings 
+         WHERE borrowing_code LIKE ? OR borrower_name LIKE ? OR book_title LIKE ? 
+         ORDER BY borrowing_id DESC;`,
+        `%${searchQuery}%`,
+        `%${searchQuery}%`,
+        `%${searchQuery}%`
+      ) as CachedBorrowing[];
+    }
+    return db.getAllSync('SELECT * FROM borrowings ORDER BY borrowing_id DESC;') as CachedBorrowing[];
+  } catch (error) {
+    handleDatabaseError(error, 'getCachedBorrowings');
+    return [];
+  }
+};
+
+// ==========================================
+// NOTIFICATIONS CACHE OPERATIONS
+// ==========================================
+export const cacheNotifications = (notifications: CachedNotification[]): void => {
+  if (!ensureDatabase()) return;
+  try {
+    for (const notif of notifications) {
+      if (notif.deleted_at) {
+        db.runSync('DELETE FROM notifications WHERE notification_id = ?;', notif.notification_id);
+        continue;
+      }
+      db.runSync(
+        `INSERT OR REPLACE INTO notifications (
+          notification_id, notification_title, notification_message, 
+          notification_type, is_read, created_at, updated_at, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL);`,
+        notif.notification_id,
+        notif.notification_title,
+        notif.notification_message || '',
+        notif.notification_type,
+        notif.is_read ? 1 : 0,
+        notif.created_at || new Date().toISOString(),
+        notif.updated_at || new Date().toISOString()
+      );
+    }
+  } catch (error) {
+    handleDatabaseError(error, 'cacheNotifications');
+  }
+};
+
+export const getCachedNotifications = (): CachedNotification[] => {
+  if (!ensureDatabase()) return [];
+  try {
+    const raw = db.getAllSync('SELECT * FROM notifications ORDER BY notification_id DESC;') as any[];
+    return raw.map(notif => ({
+      ...notif,
+      is_read: notif.is_read === 1
+    }));
+  } catch (error) {
+    handleDatabaseError(error, 'getCachedNotifications');
+    return [];
+  }
+};
+
+export const markCachedNotificationRead = (id: number): void => {
+  if (!ensureDatabase()) return;
+  try {
+    db.runSync('UPDATE notifications SET is_read = 1 WHERE notification_id = ?;', id);
+  } catch (error) {
+    handleDatabaseError(error, 'markCachedNotificationRead');
+  }
+};
+
+// ==========================================
+// OFFLINE SYNC QUEUE OPERATIONS
+// ==========================================
 export const queueOfflineScan = (scan: Omit<OfflineScan, 'timestamp' | 'sync_status'>): void => {
   if (!ensureDatabase()) return;
   try {
@@ -187,9 +473,6 @@ export const queueOfflineScan = (scan: Omit<OfflineScan, 'timestamp' | 'sync_sta
   }
 };
 
-/**
- * Get all pending offline scans for syncing.
- */
 export const getPendingScans = (): OfflineScan[] => {
   if (!ensureDatabase()) return [];
   try {
@@ -200,9 +483,6 @@ export const getPendingScans = (): OfflineScan[] => {
   }
 };
 
-/**
- * Get all queued scans (for queue manager UI).
- */
 export const getAllScans = (): OfflineScan[] => {
   if (!ensureDatabase()) return [];
   try {
@@ -213,9 +493,6 @@ export const getAllScans = (): OfflineScan[] => {
   }
 };
 
-/**
- * Mark a queued scan as successfully synchronized.
- */
 export const markScanSynced = (id: number): void => {
   if (!ensureDatabase()) return;
   try {
@@ -226,9 +503,6 @@ export const markScanSynced = (id: number): void => {
   }
 };
 
-/**
- * Mark a queued scan as failed with validation error.
- */
 export const markScanFailed = (id: number, errorMessage: string): void => {
   if (!ensureDatabase()) return;
   try {
@@ -239,9 +513,6 @@ export const markScanFailed = (id: number, errorMessage: string): void => {
   }
 };
 
-/**
- * Clear synced items from scans queue.
- */
 export const clearSyncedScans = (): void => {
   if (!ensureDatabase()) return;
   try {

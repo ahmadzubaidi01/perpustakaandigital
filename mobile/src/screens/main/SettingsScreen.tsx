@@ -83,7 +83,11 @@ export default function SettingsScreen({ navigation }: any) {
 
   useEffect(() => {
     fetchSettings();
-  }, [user]);
+    const unsubscribe = navigation?.addListener('focus', () => {
+      fetchSettings();
+    });
+    return unsubscribe;
+  }, [navigation, user]);
 
   const handleSaveAdminConfig = async () => {
     if (!maxBorrowDays.trim() || !maxBooks.trim() || !penaltyRate.trim() || !maxExtensions.trim()) {

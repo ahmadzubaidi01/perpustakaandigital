@@ -3,8 +3,8 @@
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { Menu, Bell, LogOut, ChevronDown } from 'lucide-react';
-import { useAuthStore, useSidebarStore } from '@/lib/store';
-import { authAPI } from '@/lib/api';
+import { useAuthStore, useSidebarStore, useNotificationStore } from '@/lib/store';
+import { authAPI, notificationsAPI } from '@/lib/api';
 import { useState, useRef, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import Cookies from 'js-cookie';
@@ -15,6 +15,7 @@ export default function Topbar() {
   const router = useRouter();
   const { user, logout } = useAuthStore();
   const { setMobileOpen } = useSidebarStore();
+  const { unreadCount, setUnreadCount } = useNotificationStore();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -35,6 +36,18 @@ export default function Topbar() {
       window.removeEventListener('keydown', handleKey);
     };
   }, []);
+
+  // Fetch unread count on mount
+  useEffect(() => {
+    if (!user) return;
+    const fetchUnread = async () => {
+      try {
+        const res = await notificationsAPI.list({ limit: 1 });
+        setUnreadCount(res.data.metadata?.unread_count || 0);
+      } catch (err) { /* ignore */ }
+    };
+    fetchUnread();
+  }, [user, setUnreadCount]);
 
   const handleLogout = async () => {
     try {
@@ -77,7 +90,9 @@ export default function Topbar() {
           aria-label="Notifikasi"
         >
           <Bell size={18} />
-          <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-destructive animate-pulse-glow ring-2 ring-card" />
+          {unreadCount > 0 && (
+            <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-destructive animate-pulse-glow ring-2 ring-card" />
+          )}
         </Link>
 
         {/* Profile dropdown */}

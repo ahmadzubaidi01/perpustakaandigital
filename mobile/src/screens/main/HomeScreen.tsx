@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../store/authStore';
 import api, { booksAPI, borrowingsAPI, dashboardAPI } from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
-import { checkOnlineStatus } from '../../services/syncService';
+import { useNetwork } from '../../context/NetworkContext';
 import { useNotificationStore } from '../../store/notificationStore';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 
@@ -18,21 +18,12 @@ export default function HomeScreen({ navigation }: any) {
   const [recentBooks, setRecentBooks] = useState<any[]>([]);
   const [activeBorrowings, setActiveBorrowings] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [isOnline, setIsOnline] = useState(true);
+  const { isOnline } = useNetwork();
   
   // Admin stats states
   const isAdmin = user?.user_role && user.user_role !== 'student_member';
   const [adminStats, setAdminStats] = useState<any>(null);
   const [loadingStats, setLoadingStats] = useState(false);
-
-  const checkConnection = async () => {
-    try {
-      const online = await checkOnlineStatus();
-      setIsOnline(online);
-    } catch {
-      setIsOnline(false);
-    }
-  };
 
   const fetchAdminStats = async () => {
     if (!isAdmin) return;
@@ -99,7 +90,6 @@ export default function HomeScreen({ navigation }: any) {
 
   const fetchData = async () => {
     try {
-      await checkConnection();
       const [booksRes, borrowRes] = await Promise.all([
         booksAPI.list({ limit: 4, sort_by: 'created_at', sort_order: 'DESC' }),
         borrowingsAPI.list({ limit: 10 }),
@@ -125,12 +115,13 @@ export default function HomeScreen({ navigation }: any) {
 
   useEffect(() => {
     fetchData();
-  }, [refreshTrigger]);
+    const unsubscribe = navigation.addListener('focus', () => {
+      fetchData();
+    });
+    return unsubscribe;
+  }, [navigation, refreshTrigger]);
 
-  useEffect(() => {
-    const interval = setInterval(checkConnection, 10000); // Poll connection every 10s
-    return () => clearInterval(interval);
-  }, []);
+
 
   const onRefresh = async () => { 
     setRefreshing(true); 

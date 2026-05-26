@@ -97,6 +97,14 @@ const sendNewMessage = asyncHandler(async (req: Request, res: Response): Promise
   if (conv) {
     const recipientId = conv.participant_1_id === senderId ? conv.participant_2_id : conv.participant_1_id;
     emitChatMessage(conversationId, recipientId, messageWithSender.toJSON());
+
+    // Generate in-app database notification and emit global Socket notification
+    try {
+      const { sendChatMessageNotification } = require('../services/notificationService');
+      await sendChatMessageNotification(recipientId, (messageWithSender as any).sender.full_name, message_text.trim());
+    } catch (err: any) {
+      console.error('Failed to trigger chat notification:', err.message);
+    }
   }
 
   apiResponse.created(res, 'Message sent', messageWithSender);

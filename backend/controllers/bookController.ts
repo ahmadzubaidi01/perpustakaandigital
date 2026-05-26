@@ -156,17 +156,20 @@ const getBook = asyncHandler(async (req: Request, res: Response): Promise<void> 
 });
 
 const listBooks = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const pagination = parsePaginationParams(req, 'created_at', ['created_at', 'book_title', 'author_name', 'publication_year', 'available_stock']);
+  const pagination = parsePaginationParams(req, 'created_at', ['created_at', 'book_title', 'author_name', 'publication_year', 'available_stock', 'updated_at']);
   const filters = parseFilterParams(req, ['book_status', 'category_id', 'school_id']);
   const search = parseSearchQuery(req);
   const where: any = { ...filters };
+
+  // Support incremental sync updated_after
+  if (req.query.updated_after) {
+    where.updated_at = { [Op.gt]: new Date(req.query.updated_after as string) };
+  }
 
   // Apply regional scope — for regency/district admins, scope via school join
   const regionFilter = buildRegionalFilter(req.user);
   if (regionFilter.school_id) {
     where.school_id = regionFilter.school_id;
-  } else if (regionFilter.district_id || regionFilter.regency_id) {
-    // Will be handled via the school include filter below
   }
 
   if (search) {
@@ -178,6 +181,23 @@ const listBooks = asyncHandler(async (req: Request, res: Response): Promise<void
     ];
   }
 
+  // Check if it's a sync request
+  const isSync = req.query.sync === 'true';
+
+  if (isSync) {
+    // Optimized lightweight sync query including soft-deleted items
+    const { count, rows } = await Book.findAndCountAll({
+      where,
+      attributes: ['book_id', 'book_code', 'book_title', 'author_name', 'book_status', 'available_stock', 'total_stock', 'cover_image_url', 'created_at', 'updated_at', 'deleted_at'],
+      order: [[pagination.sortBy, pagination.sortOrder]],
+      limit: pagination.limit,
+      offset: pagination.offset,
+      paranoid: false, // Return soft-deleted items to sync deletions
+    });
+    apiResponse.paginated(res, 'Books sync retrieved', rows, buildPaginationResult(count, pagination));
+    return;
+  }
+
   // Build school include — add a where clause if scoping by district or regency
   const schoolIncludeWhere: any = {};
   if (regionFilter.district_id) schoolIncludeWhere.district_id = regionFilter.district_id;
@@ -186,7 +206,13 @@ const listBooks = asyncHandler(async (req: Request, res: Response): Promise<void
     ? { association: 'school', attributes: ['school_id', 'school_name'], where: schoolIncludeWhere }
     : { association: 'school', attributes: ['school_id', 'school_name'] };
 
-  const { count, rows } = await Book.findAndCountAll({ where, include: [{ association: 'category', attributes: ['category_id', 'category_name'] }, schoolInclude], order: [[pagination.sortBy, pagination.sortOrder]], limit: pagination.limit, offset: pagination.offset });
+  const { count, rows } = await Book.findAndCountAll({
+    where,
+    include: [{ association: 'category', attributes: ['category_id', 'category_name'] }, schoolInclude],
+    order: [[pagination.sortBy, pagination.sortOrder]],
+    limit: pagination.limit,
+    offset: pagination.offset
+  });
   apiResponse.paginated(res, 'Books retrieved', rows, buildPaginationResult(count, pagination));
 });
 

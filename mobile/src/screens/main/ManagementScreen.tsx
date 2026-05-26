@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,6 +13,14 @@ export default function ManagementScreen({ navigation }: any) {
   const { chatUnreadCount, fetchUnreadCount } = useNotificationStore();
   const [refreshing, setRefreshing] = useState(false);
   const styles = getStyles(colors);
+
+  useEffect(() => {
+    fetchUnreadCount();
+    const unsubscribe = navigation.addListener('focus', () => {
+      fetchUnreadCount();
+    });
+    return unsubscribe;
+  }, [navigation]);
 
   const onRefresh = async () => {
     setRefreshing(true);

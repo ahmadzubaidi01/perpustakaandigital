@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-dotenv.config();
+dotenv.config({ override: true });
 
 import env from './config/environment';
 import logger from './utils/logger';
@@ -133,9 +133,9 @@ const startServer = async () => {
     }
 
     // Start listening HTTP Server
-    httpServer.listen(env.PORT, () => {
-      logger.info(`${env.APP_NAME} server running on port ${env.PORT} [${env.NODE_ENV}]`);
-    });
+    httpServer.listen(env.PORT, '0.0.0.0', () => {
+  logger.info(`${env.APP_NAME} server running on port ${env.PORT} [${env.NODE_ENV}]`);
+});
 
     // Initialize Socket.IO real-time service
     try {

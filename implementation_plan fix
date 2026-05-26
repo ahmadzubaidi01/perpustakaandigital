@@ -1,0 +1,145 @@
+# Architecture Synchronization & Optimization Plan
+
+This implementation plan outlines the structural, caching, and synchronization enhancements to stabilize the digital library system between the mobile app (React Native), web app (Next.js), backend API (Node.js Express), local mobile database (SQLite), and server database (MySQL). 
+
+All changes will be implemented **without changing any existing business logic, UI layouts, database relationships, authorization controls, or role hierarchies.**
+
+---
+
+## Proposed Changes
+
+### 1. Database Indexing & Query Optimizations (Backend)
+
+We will perform query optimizations and add indexes to MySQL to resolve performance bottlenecks and support fast incremental synchronization.
+
+#### [NEW] [20260526000001-add-missing-indexes.js](file:///c:/Users/evane/OneDrive/Dokumen/Punya%20Ahmad/perpustakaandigital_backup/perpustakaandigital/backend/migrations/20260526000001-add-missing-indexes.js)
+Create a versioned migration file to add indexes on `updated_at` and other key fields to avoid full-table scans during syncing:
+```javascript
+'use strict';
+module.exports = {
+  async up(queryInterface, Sequelize) {
+    // Indexes for incremental synchronization
+    await queryInterface.addIndex('books', ['updated_at'], { name: 'idx_books_updated_at' });
+    await queryInterface.addIndex('users', ['updated_at'], { name: 'idx_users_updated_at' });
+    await queryInterface.addIndex('borrowings', ['updated_at'], { name: 'idx_borrowings_updated_at' });
+    await queryInterface.addIndex('notifications', ['updated_at'], { name: 'idx_notifications_updated_at' });
+    await queryInterface.addIndex('book_qr', ['updated_at'], { name: 'idx_book_qr_updated_at' });
+  },
+  async down(queryInterface, Sequelize) {
+    await queryInterface.removeIndex('books', 'idx_books_updated_at');
+    await queryInterface.removeIndex('users', 'idx_users_updated_at');
+    await queryInterface.removeIndex('borrowings', 'idx_borrowings_updated_at');
+    await queryInterface.removeIndex('notifications', 'idx_notifications_updated_at');
+    await queryInterface.removeIndex('book_qr', 'idx_book_qr_updated_at');
+  }
+};
+```
+
+#### [MODIFY] [bookController.ts](file:///c:/Users/evane/OneDrive/Dokumen/Punya%20Ahmad/perpustakaandigital_backup/perpustakaandigital/backend/controllers/bookController.ts)
+* Support the optional `updated_after` query parameter in `listBooks` to filter books updated since a specific timestamp: `updated_at > :updated_after`.
+* Avoid `SELECT *` patterns by using explicit attributes matching UI requirements.
+
+#### [MODIFY] [userController.ts](file:///c:/Users/evane/OneDrive/Dokumen/Punya%20Ahmad/perpustakaandigital_backup/perpustakaandigital/backend/controllers/userController.ts)
+* Support `updated_after` filtering in `listUsers` for incremental student data sync.
+* Optimize database queries by selecting only requested columns for lists.
+
+#### [MODIFY] [borrowingController.ts](file:///c:/Users/evane/OneDrive/Dokumen/Punya%20Ahmad/perpustakaandigital_backup/perpustakaandigital/backend/controllers/borrowingController.ts)
+* Support `updated_after` filtering in `listBorrowings` for incremental transaction history sync.
+
+#### [MODIFY] [notificationController.ts](file:///c:/Users/evane/OneDrive/Dokumen/Punya%20Ahmad/perpustakaandigital_backup/perpustakaandigital/backend/controllers/notificationController.ts)
+* Support `updated_after` filtering in `listNotifications` for incremental notification cache sync.
+
+---
+
+### 2. Centralized Request Manager & Circuit Breaker (Web & Mobile)
+
+To prevent `TOO MANY REQUESTS` (429) errors, request loops, and cascading failures under unstable connection states, we will build a robust wrapper/interceptor layer on top of our Axios clients.
+
+#### [MODIFY] [api.ts](file:///c:/Users/evane/OneDrive/Dokumen/Punya%20Ahmad/perpustakaandigital_backup/perpustakaandigital/frontend/src/lib/api.ts) (Web Frontend) & [api.ts](file:///c:/Users/evane/OneDrive/Dokumen/Punya%20Ahmad/perpustakaandigital_backup/perpustakaandigital/mobile/src/services/api.ts) (Mobile)
+We will introduce three primary mechanisms in the interceptors:
+1. **Deduplicated Refresh Token Queue**: If multiple concurrent API requests trigger a `401 Unauthorized` response, they will queue up behind a single, shared in-flight refresh token API call, preventing simultaneous refresh requests from corrupting the auth session or flooding the endpoint.
+2. **Request Deduplication**: Track in-flight GET requests and resolve duplicate identical requests (same URL, method, and params) initiated within a 200ms window to a single cached Promise, eliminating duplicate component-lifecycle loads.
+3. **Circuit Breaker Pattern**:
+   * **CLOSED (Normal)**: Requests pass through normally.
+   * **OPEN (Degraded)**: If 5 consecutive server (5xx) or network errors (timeout) occur, block outgoing requests immediately and return a fast local fail/offline response for 10 seconds to let the backend stabilize.
+   * **HALF_OPEN (Recovery)**: Probe connection with a single request. If successful, CLOSE the circuit; if it fails, reopen it for a doubled cooldown period.
+
+---
+
+### 3. High-Performance Offline Caching & Synchronization (Mobile)
+
+We will expand the mobile local SQLite database to caching all required School Admin datasets and establish a robust, low-bandwidth incremental sync system.
+
+#### [MODIFY] [db.ts](file:///c:/Users/evane/OneDrive/Dokumen/Punya%20Ahmad/perpustakaandigital_backup/perpustakaandigital/mobile/src/services/db.ts)
+Extend our local SQLite schema by adding tables and indices for offline data caching:
+* `students`: Cache students in the admin's school for offline searches.
+* `borrowings`: Cache active borrowings and transaction histories.
+* `notifications`: Cache in-app notifications.
+* Update existing tables (`books` and `offline_scans`) to include `updated_at`, `deleted_at`, and `sync_status` fields.
+* Implement structured CRUD methods to read and batch-write to these tables.
+
+#### [MODIFY] [syncService.ts](file:///c:/Users/evane/OneDrive/Dokumen/Punya%20Ahmad/perpustakaandigital_backup/perpustakaandigital/mobile/src/services/syncService.ts)
+* **Incremental Synchronization**: Save `last_sync_timestamp` in `AsyncStorage`. When online, request incremental changes from `/v1/books`, `/v1/users`, `/v1/borrowings`, and `/v1/notifications` using `updated_after = last_sync_timestamp`.
+* **Safe Sync Queue**: Read pending offline transactions from the local `offline_scans` table and process them in order. Handle network interrupts safely without corrupting indices.
+* **Low Connectivity Optimizations**: Compress synchronization payloads and process large datasets in smaller batches (e.g., 50 records) to prevent memory spikes or locking contention.
+
+#### [MODIFY] [authStore.ts](file:///c:/Users/evane/OneDrive/Dokumen/Punya%20Ahmad/perpustakaandigital_backup/perpustakaandigital/mobile/src/store/authStore.ts)
+* Cache the authenticated `user` profile as a serialized JSON string in `SecureStore` alongside `access_token` and `refresh_token` upon a successful login.
+* During app launch (`hydrate`), load the cached user profile and tokens immediately from `SecureStore` to make the login transition instant (< 1 second) and allow full offline startup.
+
+#### [MODIFY] [App.tsx](file:///c:/Users/evane/OneDrive/Dokumen/Punya%20Ahmad/perpustakaandigital_backup/perpustakaandigital/mobile/App.tsx)
+* Hydrate from the local store first.
+* Once loaded, trigger a non-blocking background query (`authAPI.getProfile()`) to verify the token and refresh the cached profile in the background. If a network connectivity issue is encountered, do NOT log the user out—gracefully fall back to the cached profile. Only execute a logout if the backend explicitly returns a `401 Unauthorized` (invalid/expired session).
+
+---
+
+### 4. TanStack Query Caching & Loop Avoidance (Web Frontend)
+
+To solve the infinite fetching loops and recursive rerender triggers on the Next.js frontend, we will integrate TanStack Query (`@tanstack/react-query`) as the centralized data-fetching cache layer.
+
+#### [NEW] [ReactQueryProvider.tsx](file:///c:/Users/evane/OneDrive/Dokumen/Punya%20Ahmad/perpustakaandigital_backup/perpustakaandigital/frontend/src/components/providers/ReactQueryProvider.tsx)
+Create a wrapper client provider with safe configurations:
+```typescript
+'use client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ReactNode, useState } from 'react';
+
+export default function ReactQueryProvider({ children }: { children: ReactNode }) {
+  const [queryClient] = useState(() => new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: 1000 * 60 * 5, // 5 minutes cache validity
+        gcTime: 1000 * 60 * 10,   // 10 minutes garbage collection
+        refetchOnWindowFocus: false, // Prevent excessive refetching
+        retry: 1,
+      },
+    },
+  }));
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      {children}
+    </QueryClientProvider>
+  );
+}
+```
+
+#### [MODIFY] [layout.tsx](file:///c:/Users/evane/OneDrive/Dokumen/Punya%20Ahmad/perpustakaandigital_backup/perpustakaandigital/frontend/src/app/layout.tsx)
+Mount the `ReactQueryProvider` in `RootLayout`.
+
+#### [MODIFY] [AuthProvider.tsx](file:///c:/Users/evane/OneDrive/Dokumen/Punya%20Ahmad/perpustakaandigital_backup/perpustakaandigital/frontend/src/components/providers/AuthProvider.tsx)
+Prevent repeated auth validation loops. Ensure authentication validation is run exactly once and does not block layout rendering.
+
+---
+
+## Verification Plan
+
+### 1. Automated Performance & Concurrency Tests
+* Run the Express server and load test the `/v1/books` and `/v1/users` endpoints using `updated_after` parameters to check incremental query times.
+* Run the Sequelize migration and verify that all indices are correctly added to the MySQL database tables.
+
+### 2. Manual Caching and Offline Scenarios
+* **Offline Boot**: Turn off internet connection on the mobile device, launch the app, and ensure it bypasses online profile validation and enters the dashboard instantly using the local cache.
+* **Offline Transaction Queue**: Scan a book QR to borrow and return offline. Verify it queues transactions locally as `pending`. Reconnect to the internet and ensure the background thread synchronizes transactions to MySQL.
+* **Concurrent Token Refresh**: Simulate a token expiry (force access token invalidation) and send multiple parallel API calls. Verify that only a single `/v1/auth/refresh` request is sent, and all calls are successfully retried with the new token.
+* **Circuit Breaker Test**: Force the API backend to turn off or fail. Verify that after 5 failures, the client instantly rejects further calls locally for 10 seconds without overloading the server.

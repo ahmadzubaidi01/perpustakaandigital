@@ -8,8 +8,85 @@ const api: AxiosInstance = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+// ==========================================
+// CIRCUIT BREAKER IMPLEMENTATION
+// ==========================================
+class CircuitBreaker {
+  private state: 'CLOSED' | 'OPEN' | 'HALF_OPEN' = 'CLOSED';
+  private failureCount = 0;
+  private failureThreshold = 5;
+  private cooldownPeriod = 10000; // 10s cooldown
+  private nextAttemptTime = 0;
+
+  public shouldAllowRequest(): boolean {
+    const now = Date.now();
+    if (this.state === 'OPEN') {
+      if (now > this.nextAttemptTime) {
+        this.state = 'HALF_OPEN';
+        console.log('[CircuitBreaker] Entering HALF-OPEN state, probing connection.');
+        return true;
+      }
+      return false;
+    }
+    return true;
+  }
+
+  public recordSuccess() {
+    this.failureCount = 0;
+    this.state = 'CLOSED';
+  }
+
+  public recordFailure() {
+    this.failureCount++;
+    if (this.failureCount >= this.failureThreshold) {
+      this.state = 'OPEN';
+      this.nextAttemptTime = Date.now() + this.cooldownPeriod;
+      console.warn(`[CircuitBreaker] Opened. Requests blocked for 10s.`);
+    }
+  }
+}
+
+const circuitBreaker = new CircuitBreaker();
+
+// ==========================================
+// REQUEST DEDUPLICATOR
+// ==========================================
+const inFlightRequests = new Map<string, Promise<any>>();
+
+const getRequestKey = (config: any): string => {
+  const method = config.method || 'get';
+  const url = config.url || '';
+  const params = config.params ? JSON.stringify(config.params) : '';
+  return `${method}:${url}:${params}`;
+};
+
+// ==========================================
+// TOKEN REFRESH DEDUPLICATOR & QUEUE
+// ==========================================
+let isRefreshing = false;
+let failedQueue: any[] = [];
+
+const processQueue = (error: any, token: string | null = null) => {
+  failedQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  failedQueue = [];
+};
+
 // Request interceptor
 api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
+  if (!circuitBreaker.shouldAllowRequest()) {
+    return Promise.reject(new axios.AxiosError(
+      'Backend service temporarily unavailable (Circuit Breaker Active)',
+      'ECIRCUITBREAKER',
+      config
+    ));
+  }
+
   const token = await SecureStore.getItemAsync('access_token');
   if (token && config.headers) {
     config.headers.Authorization = `Bearer ${token}`;
@@ -17,31 +94,96 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   return config;
 });
 
-// Response interceptor — auto refresh on 401
+// Response interceptor — auto refresh on 401 & track circuit failures
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    circuitBreaker.recordSuccess();
+    return response;
+  },
   async (error) => {
     const originalRequest = error.config;
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true;
-      try {
-        const refreshToken = await SecureStore.getItemAsync('refresh_token');
-        if (!refreshToken) throw new Error('No refresh token');
-        const res = await axios.post(`${API_BASE_URL}/v1/auth/refresh`, { refresh_token: refreshToken });
-        const { access_token, refresh_token: newRefresh } = res.data.data.tokens;
-        await SecureStore.setItemAsync('access_token', access_token);
-        await SecureStore.setItemAsync('refresh_token', newRefresh);
-        originalRequest.headers.Authorization = `Bearer ${access_token}`;
-        return api(originalRequest);
-      } catch {
-        await SecureStore.deleteItemAsync('access_token');
-        await SecureStore.deleteItemAsync('refresh_token');
-        return Promise.reject(error);
+    const status = error.response?.status;
+
+    // Track circuit breaker states
+    const isNetworkError = !error.response;
+    const isServerError = status >= 500;
+    if (isNetworkError || isServerError) {
+      circuitBreaker.recordFailure();
+    } else if (status < 500 && status !== 401) {
+      circuitBreaker.recordSuccess();
+    }
+
+    if (status === 401 && !originalRequest._retry) {
+      if (isRefreshing) {
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject });
+        })
+          .then((token) => {
+            originalRequest.headers.Authorization = `Bearer ${token}`;
+            return api(originalRequest);
+          })
+          .catch((err) => Promise.reject(err));
       }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
+      return new Promise(async (resolve, reject) => {
+        try {
+          const refreshToken = await SecureStore.getItemAsync('refresh_token');
+          if (!refreshToken) {
+            isRefreshing = false;
+            reject(error);
+            return;
+          }
+
+          const res = await axios.post(`${API_BASE_URL}/v1/auth/refresh`, { refresh_token: refreshToken });
+          const { access_token, refresh_token: newRefresh } = res.data.data.tokens;
+          
+          await SecureStore.setItemAsync('access_token', access_token);
+          await SecureStore.setItemAsync('refresh_token', newRefresh);
+          
+          originalRequest.headers.Authorization = `Bearer ${access_token}`;
+          processQueue(null, access_token);
+          resolve(api(originalRequest));
+        } catch (err: any) {
+          processQueue(err, null);
+          const isNetworkError = !err.response;
+          const isServerError = err.response?.status >= 500;
+          if (!isNetworkError && !isServerError) {
+            await SecureStore.deleteItemAsync('access_token');
+            await SecureStore.deleteItemAsync('refresh_token');
+            await SecureStore.deleteItemAsync('user_profile');
+          }
+          reject(err);
+        } finally {
+          isRefreshing = false;
+        }
+      });
     }
     return Promise.reject(error);
   }
 );
+
+// Transparently deduplicate GET requests on mobile
+const originalGet = api.get;
+api.get = function<T = any, R = any, D = any>(url: string, config?: any): Promise<R> {
+  const requestKey = getRequestKey({ method: 'get', url, ...config });
+  if (inFlightRequests.has(requestKey)) {
+    return inFlightRequests.get(requestKey)! as any;
+  }
+  const promise = originalGet.call(api, url, config)
+    .then((res) => {
+      inFlightRequests.delete(requestKey);
+      return res;
+    })
+    .catch((err) => {
+      inFlightRequests.delete(requestKey);
+      throw err;
+    });
+  inFlightRequests.set(requestKey, promise);
+  return promise as any;
+} as any;
 
 export default api;
 

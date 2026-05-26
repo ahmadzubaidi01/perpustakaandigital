@@ -93,11 +93,15 @@ export default function SchoolManagementScreen({ navigation }: any) {
   };
 
   useEffect(() => {
-    fetchDropdowns();
     fetchSchools(true);
-  }, []);
+    const unsubscribe = navigation?.addListener('focus', () => {
+      fetchSchools(true);
+    });
+    return unsubscribe;
+  }, [navigation]);
 
   useEffect(() => {
+    if (search === '') return;
     const delay = setTimeout(() => {
       fetchSchools(true);
     }, 400);
@@ -105,6 +109,7 @@ export default function SchoolManagementScreen({ navigation }: any) {
   }, [search]);
 
   const handleOpenForm = (school?: any) => {
+    fetchDropdowns();
     if (school) {
       setSelectedSchool(school);
       setSchoolName(school.school_name);

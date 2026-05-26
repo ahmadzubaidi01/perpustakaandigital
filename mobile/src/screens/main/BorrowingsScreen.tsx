@@ -181,7 +181,11 @@ export default function BorrowingsScreen({ navigation }: any) {
 
   useEffect(() => {
     fetchBorrowings();
-  }, [searchQuery, refreshTrigger]);
+    const unsubscribe = navigation?.addListener('focus', () => {
+      fetchBorrowings();
+    });
+    return unsubscribe;
+  }, [navigation, searchQuery, refreshTrigger]);
 
   useEffect(() => {
     if (filter === '') {

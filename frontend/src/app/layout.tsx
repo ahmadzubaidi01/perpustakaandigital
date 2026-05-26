@@ -3,6 +3,7 @@ import "./globals.css";
 import { Toaster } from "react-hot-toast";
 import AuthProvider from "@/components/providers/AuthProvider";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
+import ReactQueryProvider from "@/components/providers/ReactQueryProvider";
 
 export const metadata: Metadata = {
   title: "Perpustakaan Digital — Sistem Manajemen Perpustakaan",
@@ -19,29 +20,31 @@ export default function RootLayout({
     <html lang="id" suppressHydrationWarning>
       <body>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-          <AuthProvider>
-            {children}
-            <Toaster
-              position="top-right"
-              toastOptions={{
-                duration: 4000,
-                style: {
-                  background: 'var(--card)',
-                  color: 'var(--foreground)',
-                  border: '1px solid var(--border)',
-                  borderRadius: '10px',
-                  fontSize: '14px',
-                  boxShadow: '0 4px 20px rgba(0, 0, 0, 0.05)'
-                },
-                success: {
-                  iconTheme: { primary: 'var(--success)', secondary: 'transparent' },
-                },
-                error: {
-                  iconTheme: { primary: 'var(--destructive)', secondary: 'transparent' },
-                },
-              }}
-            />
-          </AuthProvider>
+          <ReactQueryProvider>
+            <AuthProvider>
+              {children}
+              <Toaster
+                position="top-right"
+                toastOptions={{
+                  duration: 4000,
+                  style: {
+                    background: 'var(--card)',
+                    color: 'var(--foreground)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '10px',
+                    fontSize: '14px',
+                    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.05)'
+                  },
+                  success: {
+                    iconTheme: { primary: 'var(--success)', secondary: 'transparent' },
+                  },
+                  error: {
+                    iconTheme: { primary: 'var(--destructive)', secondary: 'transparent' },
+                  },
+                }}
+              />
+            </AuthProvider>
+          </ReactQueryProvider>
         </ThemeProvider>
       </body>
     </html>

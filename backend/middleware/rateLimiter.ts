@@ -9,6 +9,24 @@ import { Request, Response } from 'express';
  * Rate-limited requests return standardized API responses.
  */
 
+/**
+ * Extract client real IP address robustly behind any reverse proxies (Nginx, LiteSpeed, Cloudflare).
+ */
+const getClientIp = (req: Request): string => {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  if (forwardedFor) {
+    const ips = typeof forwardedFor === 'string' ? forwardedFor.split(',') : forwardedFor;
+    if (ips && ips.length > 0) {
+      return ips[0].trim();
+    }
+  }
+  const realIp = req.headers['x-real-ip'];
+  if (realIp) {
+    return typeof realIp === 'string' ? realIp.trim() : realIp[0].trim();
+  }
+  return req.ip || 'unknown';
+};
+
 const createStandardHandler = (message: string) => {
   return (_req: Request, res: Response) => {
     apiResponse.tooManyRequests(res, message);
@@ -25,9 +43,7 @@ const generalLimiter = rateLimit({
   legacyHeaders: false,
   skip: () => env.NODE_ENV === 'development',
   handler: createStandardHandler('Too many requests. Please try again later.'),
-  keyGenerator: (req: Request) => {
-    return req.ip || req.headers['x-forwarded-for'] as string || 'unknown';
-  },
+  keyGenerator: getClientIp,
 });
 
 /**
@@ -40,9 +56,7 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
   skip: () => env.NODE_ENV === 'development',
   handler: createStandardHandler('Too many authentication attempts. Please try again later.'),
-  keyGenerator: (req: Request) => {
-    return req.ip || req.headers['x-forwarded-for'] as string || 'unknown';
-  },
+  keyGenerator: getClientIp,
 });
 
 /**
@@ -55,9 +69,7 @@ const qrScanLimiter = rateLimit({
   legacyHeaders: false,
   skip: () => env.NODE_ENV === 'development',
   handler: createStandardHandler('Too many QR scan requests. Please try again later.'),
-  keyGenerator: (req: Request) => {
-    return req.ip || req.headers['x-forwarded-for'] as string || 'unknown';
-  },
+  keyGenerator: getClientIp,
 });
 
 /**
@@ -65,14 +77,12 @@ const qrScanLimiter = rateLimit({
  */
 const notificationLimiter = rateLimit({
   windowMs: 60000, // 1 minute
-  max: 20,
+  max: 200, // Increased from 20 to 200 to prevent false-positives during background sync
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => env.NODE_ENV === 'development',
   handler: createStandardHandler('Too many notification requests. Please try again later.'),
-  keyGenerator: (req: Request) => {
-    return req.ip || req.headers['x-forwarded-for'] as string || 'unknown';
-  },
+  keyGenerator: getClientIp,
 });
 
 /**
@@ -80,14 +90,12 @@ const notificationLimiter = rateLimit({
  */
 const passwordResetLimiter = rateLimit({
   windowMs: 3600000, // 1 hour
-  max: 5,
+  max: 10, // Increased from 5 to 10
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => env.NODE_ENV === 'development',
   handler: createStandardHandler('Too many password reset requests. Please try again later.'),
-  keyGenerator: (req: Request) => {
-    return req.ip || req.headers['x-forwarded-for'] as string || 'unknown';
-  },
+  keyGenerator: getClientIp,
 });
 
 export {

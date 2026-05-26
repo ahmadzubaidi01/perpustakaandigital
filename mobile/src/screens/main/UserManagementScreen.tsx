@@ -224,17 +224,18 @@ export default function UserManagementScreen({ navigation }: any) {
     }
   };
 
-  // Fetch Regencies (Only if super_admin or regency_id is not set)
+  // Fetch Regencies (Only if super_admin and modal is open)
   useEffect(() => {
-    if (currentUser?.user_role === 'super_admin') {
+    if (showFormModal && currentUser?.user_role === 'super_admin') {
       regionsAPI.listRegencies()
         .then((res) => setRegencies(res.data.data || []))
         .catch(() => {});
     }
-  }, [currentUser]);
+  }, [currentUser, showFormModal]);
 
-  // Fetch Districts when Regency changes
+  // Fetch Districts when Regency changes (and modal is open)
   useEffect(() => {
+    if (!showFormModal) return;
     const regencyId = currentUser?.user_role === 'super_admin' ? selectedRegencyId : currentUser?.regency_id;
     if (!regencyId) {
       setDistricts([]);
@@ -247,10 +248,11 @@ export default function UserManagementScreen({ navigation }: any) {
         setDistricts(res.data.data || []);
       })
       .catch(() => {});
-  }, [selectedRegencyId, currentUser]);
+  }, [selectedRegencyId, currentUser, showFormModal]);
 
-  // Fetch Schools when District changes
+  // Fetch Schools when District changes (and modal is open)
   useEffect(() => {
+    if (!showFormModal) return;
     const districtId = ['super_admin', 'regency_admin'].includes(currentUser?.user_role || '') 
       ? selectedDistrictId 
       : currentUser?.district_id;
@@ -265,7 +267,7 @@ export default function UserManagementScreen({ navigation }: any) {
         setSchools(res.data.data || []);
       })
       .catch(() => {});
-  }, [selectedDistrictId, currentUser]);
+  }, [selectedDistrictId, currentUser, showFormModal]);
 
   const fetchUsers = async (reset = false, pageNum?: number) => {
     const p = reset ? 1 : (pageNum !== undefined ? pageNum : page);
@@ -317,9 +319,15 @@ export default function UserManagementScreen({ navigation }: any) {
 
   useEffect(() => {
     fetchUsers(true);
-  }, [roleFilter]);
+    const unsubscribe = navigation?.addListener('focus', () => {
+      fetchUsers(true);
+    });
+    return unsubscribe;
+  }, [navigation, roleFilter]);
 
   useEffect(() => {
+    // Skip initial fetch on mount when search is empty to avoid double loading
+    if (search === '') return;
     const delay = setTimeout(() => {
       fetchUsers(true);
     }, 450);

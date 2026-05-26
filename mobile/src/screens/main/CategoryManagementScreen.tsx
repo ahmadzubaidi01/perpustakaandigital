@@ -38,7 +38,11 @@ export default function CategoryManagementScreen({ navigation }: any) {
 
   useEffect(() => {
     fetchCategories();
-  }, []);
+    const unsubscribe = navigation?.addListener('focus', () => {
+      fetchCategories();
+    });
+    return unsubscribe;
+  }, [navigation]);
 
   useEffect(() => {
     if (!search.trim()) {

@@ -9,9 +9,86 @@ const api: AxiosInstance = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-// Request interceptor — attach access token
+// ==========================================
+// CIRCUIT BREAKER IMPLEMENTATION
+// ==========================================
+class CircuitBreaker {
+  private state: 'CLOSED' | 'OPEN' | 'HALF_OPEN' = 'CLOSED';
+  private failureCount = 0;
+  private failureThreshold = 5;
+  private cooldownPeriod = 10000; // 10s cooldown
+  private nextAttemptTime = 0;
+
+  public shouldAllowRequest(): boolean {
+    const now = Date.now();
+    if (this.state === 'OPEN') {
+      if (now > this.nextAttemptTime) {
+        this.state = 'HALF_OPEN';
+        console.log('[CircuitBreaker] Entering HALF-OPEN state, probing connection.');
+        return true;
+      }
+      return false;
+    }
+    return true;
+  }
+
+  public recordSuccess() {
+    this.failureCount = 0;
+    this.state = 'CLOSED';
+  }
+
+  public recordFailure() {
+    this.failureCount++;
+    if (this.failureCount >= this.failureThreshold) {
+      this.state = 'OPEN';
+      this.nextAttemptTime = Date.now() + this.cooldownPeriod;
+      console.warn(`[CircuitBreaker] Opened. Requests blocked for 10s.`);
+    }
+  }
+}
+
+const circuitBreaker = new CircuitBreaker();
+
+// ==========================================
+// REQUEST DEDUPLICATOR
+// ==========================================
+const inFlightRequests = new Map<string, Promise<any>>();
+
+const getRequestKey = (config: any): string => {
+  const method = config.method || 'get';
+  const url = config.url || '';
+  const params = config.params ? JSON.stringify(config.params) : '';
+  return `${method}:${url}:${params}`;
+};
+
+// ==========================================
+// TOKEN REFRESH DEDUPLICATOR & QUEUE
+// ==========================================
+let isRefreshing = false;
+let failedQueue: any[] = [];
+
+const processQueue = (error: any, token: string | null = null) => {
+  failedQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  failedQueue = [];
+};
+
+// Request interceptor — attach access token & check circuit breaker
 api.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
+    if (!circuitBreaker.shouldAllowRequest()) {
+      return Promise.reject(new axios.AxiosError(
+        'Backend service temporarily unavailable (Circuit Breaker Active)',
+        'ECIRCUITBREAKER',
+        config
+      ));
+    }
+
     const token = Cookies.get('access_token');
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
@@ -21,43 +98,99 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Response interceptor — handle 401 with token refresh
+// Response interceptor — handle 401 with token refresh & track circuit failures
 api.interceptors.response.use(
-  (response: AxiosResponse) => response,
+  (response: AxiosResponse) => {
+    circuitBreaker.recordSuccess();
+    return response;
+  },
   async (error) => {
     const originalRequest = error.config;
+    const status = error.response?.status;
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true;
+    // Track circuit breaker states
+    const isNetworkError = !error.response;
+    const isServerError = status >= 500;
+    if (isNetworkError || isServerError) {
+      circuitBreaker.recordFailure();
+    } else if (status < 500 && status !== 401) {
+      circuitBreaker.recordSuccess();
+    }
 
-      try {
-        const refreshToken = Cookies.get('refresh_token');
-        if (!refreshToken) throw new Error('No refresh token');
-
-        const res = await axios.post(`${API_BASE_URL}/v1/auth/refresh`, {
-          refresh_token: refreshToken,
-        });
-
-        const { access_token, refresh_token: newRefresh } = res.data.data.tokens;
-
-        Cookies.set('access_token', access_token, { sameSite: 'strict', expires: 365, path: '/' });
-        Cookies.set('refresh_token', newRefresh, { sameSite: 'strict', expires: 365, path: '/' });
-
-        originalRequest.headers.Authorization = `Bearer ${access_token}`;
-        return api(originalRequest);
-      } catch {
-        Cookies.remove('access_token', { path: '/' });
-        Cookies.remove('refresh_token', { path: '/' });
-        if (typeof window !== 'undefined') {
-          window.location.href = '/login';
-        }
-        return Promise.reject(error);
+    if (status === 401 && !originalRequest._retry) {
+      if (isRefreshing) {
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject });
+        })
+          .then((token) => {
+            originalRequest.headers.Authorization = `Bearer ${token}`;
+            return api(originalRequest);
+          })
+          .catch((err) => Promise.reject(err));
       }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
+      return new Promise((resolve, reject) => {
+        const refreshToken = Cookies.get('refresh_token');
+        if (!refreshToken) {
+          isRefreshing = false;
+          reject(error);
+          return;
+        }
+
+        axios.post(`${API_BASE_URL}/v1/auth/refresh`, {
+          refresh_token: refreshToken,
+        })
+          .then((res) => {
+            const { access_token, refresh_token: newRefresh } = res.data.data.tokens;
+
+            Cookies.set('access_token', access_token, { sameSite: 'strict', expires: 365, path: '/' });
+            Cookies.set('refresh_token', newRefresh, { sameSite: 'strict', expires: 365, path: '/' });
+
+            originalRequest.headers.Authorization = `Bearer ${access_token}`;
+            processQueue(null, access_token);
+            resolve(api(originalRequest));
+          })
+          .catch((err) => {
+            processQueue(err, null);
+            Cookies.remove('access_token', { path: '/' });
+            Cookies.remove('refresh_token', { path: '/' });
+            if (typeof window !== 'undefined') {
+              window.location.href = '/login';
+            }
+            reject(err);
+          })
+          .finally(() => {
+            isRefreshing = false;
+          });
+      });
     }
 
     return Promise.reject(error);
   }
 );
+
+// Transparently deduplicate GET requests
+const originalGet = api.get;
+api.get = function<T = any, R = AxiosResponse<T>, D = any>(url: string, config?: any): Promise<R> {
+  const requestKey = getRequestKey({ method: 'get', url, ...config });
+  if (inFlightRequests.has(requestKey)) {
+    return inFlightRequests.get(requestKey)!;
+  }
+  const promise = originalGet.call(this, url, config)
+    .then((res) => {
+      inFlightRequests.delete(requestKey);
+      return res;
+    })
+    .catch((err) => {
+      inFlightRequests.delete(requestKey);
+      throw err;
+    });
+  inFlightRequests.set(requestKey, promise);
+  return promise;
+} as any;
 
 export default api;
 

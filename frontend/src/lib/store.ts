@@ -143,3 +143,19 @@ export const useChatStore = create<ChatState>((set) => ({
       .reduce((sum, c) => sum + (c.unread_count || 0), 0),
   })),
 }));
+
+// Notification State Store
+interface NotificationState {
+  unreadCount: number;
+  setUnreadCount: (count: number) => void;
+  incrementUnread: () => void;
+  decrementUnread: () => void;
+}
+
+export const useNotificationStore = create<NotificationState>((set) => ({
+  unreadCount: 0,
+  setUnreadCount: (unreadCount) => set({ unreadCount }),
+  incrementUnread: () => set((state) => ({ unreadCount: state.unreadCount + 1 })),
+  decrementUnread: () => set((state) => ({ unreadCount: Math.max(0, state.unreadCount - 1) })),
+}));
+

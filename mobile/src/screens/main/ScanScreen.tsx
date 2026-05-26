@@ -9,11 +9,12 @@ import { useAuthStore } from '../../store/authStore';
 import { useTheme } from '../../context/ThemeContext';
 import { queueOfflineScan, getAllScans, clearSyncedScans, OfflineScan } from '../../services/db';
 import { checkOnlineStatus, syncOfflineScans } from '../../services/syncService';
+import { useNetwork } from '../../context/NetworkContext';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 
 type ScanMode = 'verification' | 'borrowing' | 'returning';
 
-export default function ScanScreen() {
+export default function ScanScreen({ navigation }: any) {
   const { user } = useAuthStore();
   const { colors, isDark } = useTheme();
   const styles = getStyles(colors);
@@ -38,7 +39,7 @@ export default function ScanScreen() {
   const [offlineScans, setOfflineScans] = useState<OfflineScan[]>([]);
   const [showQueue, setShowQueue] = useState(false);
   const [isSyncingQueue, setIsSyncingQueue] = useState(false);
-  const [isOnline, setIsOnline] = useState(true);
+  const { isOnline } = useNetwork();
 
   // Advanced Inventory & Audit states
   const [traceLoading, setTraceLoading] = useState(false);
@@ -97,16 +98,17 @@ export default function ScanScreen() {
 
   useEffect(() => {
     loadQueue();
-    const checkNet = async () => {
-      const net = await checkOnlineStatus();
-      setIsOnline(net);
-    };
-    checkNet();
-    const netInterval = setInterval(checkNet, 15000);
 
     if (isAdmin) {
       fetchAnomalies();
     }
+
+    const unsubscribe = navigation?.addListener('focus', () => {
+      loadQueue();
+      if (isAdmin) {
+        fetchAnomalies();
+      }
+    });
 
     const keyboardDidShowListener = Keyboard.addListener(
       'keyboardDidShow',
@@ -118,11 +120,11 @@ export default function ScanScreen() {
     );
 
     return () => {
-      clearInterval(netInterval);
+      if (unsubscribe) unsubscribe();
       keyboardDidShowListener.remove();
       keyboardDidHideListener.remove();
     };
-  }, []);
+  }, [navigation, isAdmin]);
 
   const fetchTrace = async (qrId: number) => {
     setTraceLoading(true);
@@ -163,7 +165,6 @@ export default function ScanScreen() {
 
       // 2. Check if online
       const online = await checkOnlineStatus();
-      setIsOnline(online);
 
       if (!online) {
         // Handle Offline Queuing

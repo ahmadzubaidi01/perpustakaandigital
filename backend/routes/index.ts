@@ -24,7 +24,7 @@ const router = Router();
 
 // Apply global middleware
 router.use(deviceTracker);
-router.use(generalLimiter);
+// router.use(generalLimiter); // Commented out to prevent HTTP 429 lockouts during mobile background sync
 
 // Health check endpoints
 router.get('/health', async (_req: Request, res: Response) => {

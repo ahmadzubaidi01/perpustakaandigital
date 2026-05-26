@@ -110,6 +110,14 @@ export default function ChatScreen({ navigation }: any) {
   }, [user]);
 
   useEffect(() => {
+    fetchConversations();
+    const unsubscribe = navigation?.addListener('focus', () => {
+      fetchConversations();
+    });
+    return unsubscribe;
+  }, [navigation]);
+
+  useEffect(() => {
     if (searchQuery.trim() === '') {
       setFilteredRecipients(recipients);
     } else {

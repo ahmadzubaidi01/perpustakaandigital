@@ -28,6 +28,8 @@
       },
       "edgeToEdgeEnabled": false,
       "permissions": [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
         "CAMERA",
         "ACCESS_FINE_LOCATION",
         "WRITE_EXTERNAL_STORAGE",

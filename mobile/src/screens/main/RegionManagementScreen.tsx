@@ -68,7 +68,11 @@ export default function RegionManagementScreen({ navigation }: any) {
 
   useEffect(() => {
     fetchRegencies();
-  }, []);
+    const unsubscribe = navigation?.addListener('focus', () => {
+      fetchRegencies();
+    });
+    return unsubscribe;
+  }, [navigation]);
 
   // Filter Regencies
   useEffect(() => {

@@ -454,6 +454,32 @@ const runDailyBorrowingReminders = async (): Promise<void> => {
   }
 };
 
+/**
+ * Send chat message notification.
+ */
+const sendChatMessageNotification = async (
+  recipientId: number,
+  senderName: string,
+  messageText: string
+): Promise<void> => {
+  await createInAppNotification({
+    user_id: recipientId,
+    notification_title: `Pesan Baru dari ${senderName}`,
+    notification_message: messageText,
+    notification_type: NotificationType.ADMIN_MESSAGE,
+  });
+
+  try {
+    const { emitNotification } = require('./socketService');
+    emitNotification(recipientId, {
+      type: 'admin_message',
+      title: `Pesan Baru dari ${senderName}`,
+      message: messageText,
+      sender_name: senderName,
+    });
+  } catch { /* Socket not initialized */ }
+};
+
 export {
   createInAppNotification,
   sendEmailNotification,
@@ -465,5 +491,6 @@ export {
   sendStockAnomalyAlert,
   sendInventoryAlert,
   runDailyBorrowingReminders,
+  sendChatMessageNotification,
   NotificationPayload,
 };

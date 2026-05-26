@@ -18,10 +18,15 @@ const listUsers = asyncHandler(async (req: Request, res: Response): Promise<void
     user: req.user ? { user_id: req.user.user_id, role: req.user.user_role, regency_id: req.user.regency_id, district_id: req.user.district_id, school_id: req.user.school_id } : null,
     query: req.query
   });
-  const pagination = parsePaginationParams(req, 'created_at', ['created_at', 'full_name', 'email_address', 'user_role', 'account_status']);
+  const pagination = parsePaginationParams(req, 'created_at', ['created_at', 'full_name', 'email_address', 'user_role', 'account_status', 'updated_at']);
   const filters = parseFilterParams(req, ['user_role', 'account_status', 'school_id', 'district_id', 'regency_id']);
   const search = parseSearchQuery(req);
   const where: any = { ...filters };
+
+  // Support incremental sync updated_after
+  if (req.query.updated_after) {
+    where.updated_at = { [Op.gt]: new Date(req.query.updated_after as string) };
+  }
 
   // Exclude the current logged-in user from the user listing
   where.user_id = { [Op.ne]: req.user!.user_id };
@@ -64,6 +69,28 @@ const listUsers = asyncHandler(async (req: Request, res: Response): Promise<void
     } else {
       where[Op.or] = searchCondition;
     }
+  }
+
+  // Check if it's a sync request
+  const isSync = req.query.sync === 'true';
+
+  if (isSync) {
+    // Sync request is always filtered to student role for school admin caching
+    where.user_role = UserRole.STUDENT_MEMBER;
+    const { count, rows } = await User.findAndCountAll({
+      where,
+      attributes: [
+        'user_id', 'student_id_number', 'full_name', 'email_address', 'phone_number',
+        'profile_photo_url', 'class_name', 'member_qr_uuid', 'user_role',
+        'account_status', 'school_id', 'created_at', 'updated_at', 'deleted_at'
+      ],
+      order: [[pagination.sortBy, pagination.sortOrder]],
+      limit: pagination.limit,
+      offset: pagination.offset,
+      paranoid: false, // Support deleted student synchronization
+    });
+    apiResponse.paginated(res, 'Users sync retrieved', rows, buildPaginationResult(count, pagination));
+    return;
   }
 
   const { count, rows } = await User.findAndCountAll({
