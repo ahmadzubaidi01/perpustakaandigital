@@ -117,7 +117,12 @@ if (env.NODE_ENV === 'production') {
     'DB_PASSWORD',
   ];
 
-  const missing = requiredVars.filter((key) => !env[key as keyof typeof env]);
+  const missing = requiredVars.filter((key) => {
+    if (key === 'DB_PASSWORD') {
+      return process.env.DB_PASSWORD === undefined;
+    }
+    return !env[key as keyof typeof env];
+  });
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
   }

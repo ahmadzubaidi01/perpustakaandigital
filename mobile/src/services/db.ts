@@ -70,6 +70,7 @@ export interface OfflineScan {
   timestamp: string;
   sync_status: 'pending' | 'synced' | 'failed';
   error_message?: string | null;
+  retry_count?: number;
 }
 
 /**
@@ -126,6 +127,7 @@ export const initDatabase = (): void => {
     addColumnIfNeeded('borrowings', 'updated_at', 'TEXT');
     addColumnIfNeeded('notifications', 'updated_at', 'TEXT');
     addColumnIfNeeded('notifications', 'deleted_at', 'TEXT');
+    addColumnIfNeeded('offline_scans', 'retry_count', 'INTEGER DEFAULT 0');
     
     // 1. Create books cache table with updated_at/deleted_at support
     db.execSync(`
@@ -215,7 +217,8 @@ export const initDatabase = (): void => {
         longitude REAL,
         timestamp TEXT NOT NULL,
         sync_status TEXT DEFAULT 'pending',
-        error_message TEXT
+        error_message TEXT,
+        retry_count INTEGER DEFAULT 0
       );
     `);
     db.execSync('CREATE INDEX IF NOT EXISTS idx_scans_status ON offline_scans(sync_status);');
@@ -513,6 +516,18 @@ export const markScanFailed = (id: number, errorMessage: string): void => {
   }
 };
 
+export const incrementScanRetry = (id: number): number => {
+  if (!ensureDatabase()) return 0;
+  try {
+    db.runSync('UPDATE offline_scans SET retry_count = COALESCE(retry_count, 0) + 1 WHERE id = ?;', id);
+    const row = db.getFirstSync('SELECT retry_count FROM offline_scans WHERE id = ?;', id) as any;
+    return row ? row.retry_count : 0;
+  } catch (error) {
+    handleDatabaseError(error, 'incrementScanRetry');
+    return 0;
+  }
+};
+
 export const clearSyncedScans = (): void => {
   if (!ensureDatabase()) return;
   try {
@@ -520,5 +535,15 @@ export const clearSyncedScans = (): void => {
     console.log('[SQLite] Cleared all synced scans from queue');
   } catch (error) {
     handleDatabaseError(error, 'clearSyncedScans');
+  }
+};
+
+export const clearFailedScans = (): void => {
+  if (!ensureDatabase()) return;
+  try {
+    db.runSync("DELETE FROM offline_scans WHERE sync_status = 'failed';");
+    console.log('[SQLite] Cleared all failed scans from queue');
+  } catch (error) {
+    handleDatabaseError(error, 'clearFailedScans');
   }
 };

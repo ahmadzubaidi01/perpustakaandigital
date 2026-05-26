@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
+import { setCachedAccessToken } from '../services/api';
 
 export interface User {
   user_id: number;
@@ -45,6 +46,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   setLoading: (isLoading) => set({ isLoading }),
 
   login: async (user, accessToken, refreshToken) => {
+    setCachedAccessToken(accessToken);
     await SecureStore.setItemAsync('access_token', accessToken);
     await SecureStore.setItemAsync('refresh_token', refreshToken);
     await SecureStore.setItemAsync('user_profile', JSON.stringify(user));
@@ -52,6 +54,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   logout: async () => {
+    setCachedAccessToken(null);
     await SecureStore.deleteItemAsync('access_token');
     await SecureStore.deleteItemAsync('refresh_token');
     await SecureStore.deleteItemAsync('user_profile');
@@ -64,6 +67,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const profileStr = await SecureStore.getItemAsync('user_profile');
       
       if (token && profileStr) {
+        setCachedAccessToken(token);
         const user = JSON.parse(profileStr);
         set({ user, isAuthenticated: true, isLoading: false });
         console.log('[AuthStore] Session hydrated successfully from SecureStore');

@@ -1,7 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
+import * as FileSystem from 'expo-file-system/legacy';
 import api, { qrAPI, borrowingsAPI, booksAPI, usersAPI, notificationsAPI } from './api';
 import { API_BASE_URL } from '../constants/theme';
+import { resolveImageUrl } from '../utils/imageUtils';
 import { 
   getPendingScans, 
   markScanSynced, 
@@ -11,12 +13,17 @@ import {
   cacheBorrowings, 
   cacheNotifications,
   initDatabase,
-  OfflineScan 
+  OfflineScan,
+  incrementScanRetry,
+  getAllScans
 } from './db';
 import { useAuthStore } from '../store/authStore';
+import { useSyncDiagnosticsStore } from '../store/syncDiagnosticsStore';
 
 let isSyncingQueue = false;
 let isSyncingMetadata = false;
+let syncCooldownUntil = 0;
+let backoffDelay = 5000; // start with 5 seconds
 
 // Keys for storing sync timestamps in AsyncStorage
 const SYNC_KEYS = {
@@ -60,19 +67,32 @@ export const checkOnlineStatus = async (): Promise<boolean> => {
  */
 export const syncOfflineScans = async (onProgressUpdate?: () => void): Promise<void> => {
   if (isSyncingQueue) return;
+  if (Date.now() < syncCooldownUntil) {
+    console.log('[SyncService] In retry backoff cooldown. Bypassing sync queue replay.');
+    return;
+  }
 
   const isOnline = await checkOnlineStatus();
+  
+  // Set offline recovery diagnostics state
+  useSyncDiagnosticsStore.getState().setOfflineSyncRecovery(!isOnline);
+
   if (!isOnline) {
     console.log('[SyncService] Device is offline. Postponing sync queue.');
     return;
   }
 
+  // Update diagnostics queue health
   const pending = getPendingScans();
+  const failed = getAllScans().filter((s: any) => s.sync_status === 'failed').length;
+  useSyncDiagnosticsStore.getState().updateQueueHealth(pending.length, failed);
+
   if (pending.length === 0) {
     return;
   }
 
   isSyncingQueue = true;
+  useSyncDiagnosticsStore.getState().recordSyncStart(true);
   console.log(`[SyncService] Starting sync for ${pending.length} pending scans`);
 
   try {
@@ -81,6 +101,7 @@ export const syncOfflineScans = async (onProgressUpdate?: () => void): Promise<v
 
       try {
         console.log(`[SyncService] Syncing scan id=${scan.id}, type=${scan.scan_type}`);
+        const startTime = Date.now();
 
         switch (scan.scan_type) {
           case 'verification':
@@ -114,29 +135,72 @@ export const syncOfflineScans = async (onProgressUpdate?: () => void): Promise<v
             throw new Error(`Tipe scan tidak didukung: ${scan.scan_type}`);
         }
 
+        // Record queue latency in diagnostics
+        const duration = Date.now() - startTime;
+        useSyncDiagnosticsStore.getState().recordQueueLatency(duration);
+
         // Mark as synced on success
         markScanSynced(scan.id);
+        
+        // Update diagnostics queue health
+        const newPending = getPendingScans().length;
+        const newFailed = getAllScans().filter((s: any) => s.sync_status === 'failed').length;
+        useSyncDiagnosticsStore.getState().updateQueueHealth(newPending, newFailed);
+
         if (onProgressUpdate) onProgressUpdate();
 
+        // Successful replay: reset backoff cooldown
+        backoffDelay = 5000;
+
       } catch (error: any) {
-        // If it's a network/server failure, stop queue replay to preserve ordering
+        // If it's a network/server failure, stop queue replay to preserve ordering and trigger backoff cooldown
         const isNetworkError = !error.response;
         const isServerError = error.response?.status >= 500;
         
         if (isNetworkError || isServerError) {
           console.warn('[SyncService] Connection or server error during sync queue. Stopping queue.');
+          
+          // Increment diagnostics retry count and log failure
+          useSyncDiagnosticsStore.getState().incrementSyncRetries();
+          useSyncDiagnosticsStore.getState().logSyncFailure(scan.scan_type || 'queue', error.message || 'Connection timeout');
+          
+          // Apply exponential backoff cooldown
+          backoffDelay = Math.min(backoffDelay * 2, 120000); // Max 120s cooldown
+          syncCooldownUntil = Date.now() + backoffDelay;
+          console.log(`[SyncService] Active backoff cooldown triggered. Cooldown duration: ${backoffDelay / 1000}s`);
           break;
         }
 
-        // Business/Validation error (e.g. book already borrowed, student limit exceeded)
-        // Mark as failed and store the error message from the backend
+        // Business/Validation error (e.g. book already borrowed, student limit exceeded, invalid QR)
+        // Mark as failed and store the error message from the backend after 5 failed attempts (Dead-letter logic)
         const errMsg = error.response?.data?.message || error.message || 'Validation error';
-        markScanFailed(scan.id, errMsg);
+        const retries = incrementScanRetry(scan.id);
+
+        if (retries >= 5) {
+          console.warn(`[SyncService] Dead-letter isolation triggered for scan id=${scan.id}. Exceeded max 5 attempts. Error: ${errMsg}`);
+          markScanFailed(scan.id, errMsg);
+          useSyncDiagnosticsStore.getState().logSyncFailure(scan.scan_type, `Permanently isolated: ${errMsg}`);
+        } else {
+          console.log(`[SyncService] Validation error during sync (Attempt ${retries}/5): ${errMsg}. Leaving pending to try again.`);
+        }
+
+        // Update diagnostics queue health
+        const newPending = getPendingScans().length;
+        const newFailed = getAllScans().filter((s: any) => s.sync_status === 'failed').length;
+        useSyncDiagnosticsStore.getState().updateQueueHealth(newPending, newFailed);
+
         if (onProgressUpdate) onProgressUpdate();
       }
     }
+
+    // If we completed everything successfully without breaking out
+    const remainingPending = getPendingScans().length;
+    if (remainingPending === 0) {
+      useSyncDiagnosticsStore.getState().recordSyncSuccess();
+    }
   } finally {
     isSyncingQueue = false;
+    useSyncDiagnosticsStore.getState().recordSyncStart(false);
     console.log('[SyncService] Sync queue finished');
   }
 };
@@ -155,11 +219,14 @@ export const syncMetadataAndCache = async (): Promise<void> => {
   }
 
   const isOnline = await checkOnlineStatus();
+  useSyncDiagnosticsStore.getState().setOfflineSyncRecovery(!isOnline);
+  
   if (!isOnline) {
     return;
   }
 
   isSyncingMetadata = true;
+  useSyncDiagnosticsStore.getState().recordSyncStart(true);
   console.log('[SyncService] Starting background metadata cache synchronization...');
 
   try {
@@ -167,20 +234,65 @@ export const syncMetadataAndCache = async (): Promise<void> => {
 
     // 1. Sync Books Cache
     try {
-      const lastSyncBooks = await AsyncStorage.getItem(SYNC_KEYS.BOOKS) || '';
-      const params: any = { sync: 'true', limit: 100 };
-      if (lastSyncBooks) params.updated_after = lastSyncBooks;
+      let lastSyncBooks = await AsyncStorage.getItem(SYNC_KEYS.BOOKS) || '';
+      let page = 1;
+      let hasMore = true;
+      let newestTimestamp = lastSyncBooks;
+
+      while (hasMore) {
+        const params: any = { sync: 'true', limit: 100, page };
+        if (lastSyncBooks) params.updated_after = lastSyncBooks;
+        
+        const res = await booksAPI.list(params);
+        const data = res.data.data || [];
+        
+        if (data.length > 0) {
+          cacheBooks(data);
+
+          // Pre-cache cover images to phone storage for school admin
+          try {
+            const BOOK_COVERS_DIR = `${FileSystem.documentDirectory}book_covers/`;
+            const dirInfo = await FileSystem.getInfoAsync(BOOK_COVERS_DIR);
+            if (!dirInfo.exists) {
+              await FileSystem.makeDirectoryAsync(BOOK_COVERS_DIR, { intermediates: true });
+            }
+
+            for (const book of data) {
+              if (book.cover_image_url) {
+                const remoteUrl = resolveImageUrl(book.cover_image_url);
+                if (!remoteUrl) continue;
+
+                const parts = book.cover_image_url.split('/');
+                const filename = parts[parts.length - 1];
+                const localUri = BOOK_COVERS_DIR + filename;
+
+                const fileInfo = await FileSystem.getInfoAsync(localUri);
+                if (!fileInfo.exists) {
+                  FileSystem.downloadAsync(remoteUrl, localUri).catch(() => {});
+                }
+              }
+            }
+          } catch (imgErr) {
+            console.warn('[SyncService] Failed pre-caching cover images:', imgErr);
+          }
+
+          newestTimestamp = data.reduce((max: string, item: any) => 
+            !max || item.updated_at > max ? item.updated_at : max, newestTimestamp
+          );
+          
+          if (data.length < 100) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
       
-      const res = await booksAPI.list(params);
-      const data = res.data.data || [];
-      
-      if (data.length > 0) {
-        cacheBooks(data);
-        const newestTimestamp = data.reduce((max: string, item: any) => 
-          !max || item.updated_at > max ? item.updated_at : max, lastSyncBooks
-        );
+      if (newestTimestamp !== lastSyncBooks) {
         await AsyncStorage.setItem(SYNC_KEYS.BOOKS, newestTimestamp);
-        console.log(`[SyncService] Books cache updated incrementally: ${data.length} items`);
+        console.log(`[SyncService] Books cache updated incrementally up to: ${newestTimestamp}`);
       }
     } catch (err: any) {
       console.warn('[SyncService] Books sync skipped:', err.message);
@@ -188,20 +300,37 @@ export const syncMetadataAndCache = async (): Promise<void> => {
 
     // 2. Sync Students Cache (users in school)
     try {
-      const lastSyncStudents = await AsyncStorage.getItem(SYNC_KEYS.STUDENTS) || '';
-      const params: any = { sync: 'true', limit: 100 };
-      if (lastSyncStudents) params.updated_after = lastSyncStudents;
+      let lastSyncStudents = await AsyncStorage.getItem(SYNC_KEYS.STUDENTS) || '';
+      let page = 1;
+      let hasMore = true;
+      let newestTimestamp = lastSyncStudents;
 
-      const res = await usersAPI.list(params);
-      const data = res.data.data || [];
+      while (hasMore) {
+        const params: any = { sync: 'true', limit: 100, page };
+        if (lastSyncStudents) params.updated_after = lastSyncStudents;
 
-      if (data.length > 0) {
-        cacheStudents(data);
-        const newestTimestamp = data.reduce((max: string, item: any) => 
-          !max || item.updated_at > max ? item.updated_at : max, lastSyncStudents
-        );
+        const res = await usersAPI.list(params);
+        const data = res.data.data || [];
+
+        if (data.length > 0) {
+          cacheStudents(data);
+          newestTimestamp = data.reduce((max: string, item: any) => 
+            !max || item.updated_at > max ? item.updated_at : max, newestTimestamp
+          );
+          
+          if (data.length < 100) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
+      
+      if (newestTimestamp !== lastSyncStudents) {
         await AsyncStorage.setItem(SYNC_KEYS.STUDENTS, newestTimestamp);
-        console.log(`[SyncService] Students cache updated incrementally: ${data.length} items`);
+        console.log(`[SyncService] Students cache updated incrementally up to: ${newestTimestamp}`);
       }
     } catch (err: any) {
       console.warn('[SyncService] Students sync skipped:', err.message);
@@ -209,20 +338,37 @@ export const syncMetadataAndCache = async (): Promise<void> => {
 
     // 3. Sync Borrowings Cache
     try {
-      const lastSyncBorrowings = await AsyncStorage.getItem(SYNC_KEYS.BORROWINGS) || '';
-      const params: any = { sync: 'true', limit: 100 };
-      if (lastSyncBorrowings) params.updated_after = lastSyncBorrowings;
+      let lastSyncBorrowings = await AsyncStorage.getItem(SYNC_KEYS.BORROWINGS) || '';
+      let page = 1;
+      let hasMore = true;
+      let newestTimestamp = lastSyncBorrowings;
 
-      const res = await borrowingsAPI.list(params);
-      const data = res.data.data || [];
+      while (hasMore) {
+        const params: any = { sync: 'true', limit: 100, page };
+        if (lastSyncBorrowings) params.updated_after = lastSyncBorrowings;
 
-      if (data.length > 0) {
-        cacheBorrowings(data);
-        const newestTimestamp = data.reduce((max: string, item: any) => 
-          !max || item.updated_at > max ? item.updated_at : max, lastSyncBorrowings
-        );
+        const res = await borrowingsAPI.list(params);
+        const data = res.data.data || [];
+
+        if (data.length > 0) {
+          cacheBorrowings(data);
+          newestTimestamp = data.reduce((max: string, item: any) => 
+            !max || item.updated_at > max ? item.updated_at : max, newestTimestamp
+          );
+          
+          if (data.length < 100) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
+      
+      if (newestTimestamp !== lastSyncBorrowings) {
         await AsyncStorage.setItem(SYNC_KEYS.BORROWINGS, newestTimestamp);
-        console.log(`[SyncService] Borrowings cache updated incrementally: ${data.length} items`);
+        console.log(`[SyncService] Borrowings cache updated incrementally up to: ${newestTimestamp}`);
       }
     } catch (err: any) {
       console.warn('[SyncService] Borrowings sync skipped:', err.message);
@@ -230,20 +376,37 @@ export const syncMetadataAndCache = async (): Promise<void> => {
 
     // 4. Sync Notifications Cache
     try {
-      const lastSyncNotifications = await AsyncStorage.getItem(SYNC_KEYS.NOTIFICATIONS) || '';
-      const params: any = { sync: 'true', limit: 100 };
-      if (lastSyncNotifications) params.updated_after = lastSyncNotifications;
+      let lastSyncNotifications = await AsyncStorage.getItem(SYNC_KEYS.NOTIFICATIONS) || '';
+      let page = 1;
+      let hasMore = true;
+      let newestTimestamp = lastSyncNotifications;
 
-      const res = await notificationsAPI.list(params);
-      const data = res.data.data || [];
+      while (hasMore) {
+        const params: any = { sync: 'true', limit: 100, page };
+        if (lastSyncNotifications) params.updated_after = lastSyncNotifications;
 
-      if (data.length > 0) {
-        cacheNotifications(data);
-        const newestTimestamp = data.reduce((max: string, item: any) => 
-          !max || item.updated_at > max ? item.updated_at : max, lastSyncNotifications
-        );
+        const res = await notificationsAPI.list(params);
+        const data = res.data.data || [];
+
+        if (data.length > 0) {
+          cacheNotifications(data);
+          newestTimestamp = data.reduce((max: string, item: any) => 
+            !max || item.updated_at > max ? item.updated_at : max, newestTimestamp
+          );
+          
+          if (data.length < 100) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
+      
+      if (newestTimestamp !== lastSyncNotifications) {
         await AsyncStorage.setItem(SYNC_KEYS.NOTIFICATIONS, newestTimestamp);
-        console.log(`[SyncService] Notifications cache updated incrementally: ${data.length} items`);
+        console.log(`[SyncService] Notifications cache updated incrementally up to: ${newestTimestamp}`);
       }
     } catch (err: any) {
       console.warn('[SyncService] Notifications sync skipped:', err.message);
@@ -251,6 +414,8 @@ export const syncMetadataAndCache = async (): Promise<void> => {
 
   } finally {
     isSyncingMetadata = false;
+    useSyncDiagnosticsStore.getState().recordSyncStart(false);
+    useSyncDiagnosticsStore.getState().recordSyncSuccess();
     console.log('[SyncService] Background metadata caching sync finished');
   }
 };
@@ -261,6 +426,12 @@ export const syncMetadataAndCache = async (): Promise<void> => {
 export const startAutoSync = (onProgressUpdate?: () => void): (() => void) => {
   const interval = setInterval(async () => {
     try {
+      // STRICT RULE: Background sync and queue replay only runs for School Admin
+      const user = useAuthStore.getState().user;
+      if (user?.user_role !== 'school_admin') {
+        return;
+      }
+
       // Replay pending offline actions first to maintain strict event sequence order
       await syncOfflineScans(onProgressUpdate);
       

@@ -5,7 +5,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { settingsAPI } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { useTheme } from '../../context/ThemeContext';
-import { getCachedBooks } from '../../services/db';
+import { getCachedBooks, clearFailedScans, getPendingScans } from '../../services/db';
+import { syncOfflineScans, syncMetadataAndCache } from '../../services/syncService';
+import { useSyncDiagnosticsStore } from '../../store/syncDiagnosticsStore';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 
 export default function SettingsScreen({ navigation }: any) {
@@ -23,6 +25,44 @@ export default function SettingsScreen({ navigation }: any) {
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
   const [cleaningServer, setCleaningServer] = useState(false);
+  const [syncingManual, setSyncingManual] = useState(false);
+
+  const diagnostics = useSyncDiagnosticsStore();
+
+  const handleManualSync = async () => {
+    setSyncingManual(true);
+    try {
+      await syncOfflineScans();
+      await syncMetadataAndCache();
+      Alert.alert('Sukses', 'Proses sinkronisasi manual berhasil diselesaikan!');
+    } catch (err: any) {
+      Alert.alert('Gagal', err.message || 'Gagal menyinkronkan data.');
+    } finally {
+      setSyncingManual(false);
+    }
+  };
+
+  const handleClearFailedScans = () => {
+    Alert.alert(
+      'Hapus Antrean Gagal',
+      'Apakah Anda yakin ingin menghapus antrean transaksi offline yang gagal secara permanen?',
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Hapus Permanen',
+          style: 'destructive',
+          onPress: () => {
+            clearFailedScans();
+            useSyncDiagnosticsStore.getState().updateQueueHealth(
+              getPendingScans().length,
+              0
+            );
+            Alert.alert('Sukses', 'Antrean transaksi gagal dibersihkan.');
+          }
+        }
+      ]
+    );
+  };
 
   const handleServerCleanup = () => {
     Alert.alert(
@@ -302,6 +342,136 @@ export default function SettingsScreen({ navigation }: any) {
           </View>
         </View>
 
+        {/* Kesehatan Sinkronisasi & Cache Section */}
+        <View style={styles.section}>
+          <View style={styles.sectionTitleRow}>
+            <Ionicons name="sync-circle-outline" size={20} color={colors.primary400} />
+            <Text style={styles.sectionTitle}>Kesehatan Sinkronisasi & Cache</Text>
+          </View>
+
+          <View style={styles.settingsCard}>
+            {/* Status Koneksi */}
+            <View style={styles.metricRow}>
+              <Text style={styles.metricLabel}>Stabilitas WebSocket</Text>
+              <View style={styles.statusBadgeRow}>
+                <View style={[
+                  styles.statusDot, 
+                  { backgroundColor: diagnostics.isWebsocketStable ? colors.success500 : colors.danger500 }
+                ]} />
+                <Text style={[
+                  styles.statusText, 
+                  { color: diagnostics.isWebsocketStable ? colors.success500 : colors.danger500 }
+                ]}>
+                  {diagnostics.isWebsocketStable ? 'STABIL' : 'TERGANGGU'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.divider} />
+
+            {/* Antrean Sinkronisasi */}
+            <View style={styles.metricRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.inputLabel}>Antrean Tertunda</Text>
+                <Text style={styles.inputDesc}>Transaksi offline menunggu dikirim</Text>
+              </View>
+              <Text style={styles.metricValue}>{diagnostics.pendingQueueSize} item</Text>
+            </View>
+
+            <View style={styles.divider} />
+
+            <View style={styles.metricRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.inputLabel}>Antrean Gagal (Dead-Letter)</Text>
+                <Text style={styles.inputDesc}>Transaksi terisolasi akibat validasi</Text>
+              </View>
+              <Text style={[
+                styles.metricValue, 
+                { color: diagnostics.failedQueueSize > 0 ? colors.danger500 : colors.text }
+              ]}>
+                {diagnostics.failedQueueSize} item
+              </Text>
+            </View>
+
+            <View style={styles.divider} />
+
+            {/* Latensi API */}
+            <View style={styles.metricRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.inputLabel}>Rata-Rata Latensi API</Text>
+                <Text style={styles.inputDesc}>Kecepatan respons jaringan ke backend</Text>
+              </View>
+              <Text style={[
+                styles.metricValue, 
+                { color: diagnostics.apiResponseDegradation ? colors.danger500 : colors.success500 }
+              ]}>
+                {diagnostics.avgApiResponseTimeMs} ms
+              </Text>
+            </View>
+
+            <View style={styles.divider} />
+
+            {/* Siklus Terakhir */}
+            <View style={styles.metricRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.inputLabel}>Sinkronisasi Terakhir</Text>
+                <Text style={styles.inputDesc}>Pembaluan metadata teratur terakhir</Text>
+              </View>
+              <Text style={styles.metricValueTime}>
+                {diagnostics.lastSuccessfulSyncAt 
+                  ? new Date(diagnostics.lastSuccessfulSyncAt).toLocaleTimeString('id-ID')
+                  : 'Belum Terjadi'}
+              </Text>
+            </View>
+
+            {diagnostics.recentFailures.length > 0 && (
+              <>
+                <View style={styles.divider} />
+                <View style={{ gap: Spacing.xs }}>
+                  <Text style={[styles.inputLabel, { color: colors.danger500 }]}>Kegagalan Sinkronisasi Terkini</Text>
+                  {diagnostics.recentFailures.map((failure, idx) => (
+                    <View key={idx} style={styles.failureItem}>
+                      <Text style={styles.failureTime}>
+                        {new Date(failure.timestamp).toLocaleTimeString('id-ID')}
+                      </Text>
+                      <Text style={styles.failureText}>
+                        [{failure.operation}] {failure.errorMessage}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              </>
+            )}
+
+            <View style={{ flexDirection: 'row', gap: Spacing.md, marginTop: Spacing.lg }}>
+              <TouchableOpacity 
+                style={[styles.syncBtn, { flex: 1, backgroundColor: colors.primary500 }]} 
+                onPress={handleManualSync}
+                disabled={syncingManual}
+              >
+                {syncingManual ? (
+                  <ActivityIndicator size="small" color={colors.white} />
+                ) : (
+                  <>
+                    <Ionicons name="sync" size={16} color={colors.white} />
+                    <Text style={styles.btnText}>Sinkronkan Sekarang</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              {diagnostics.failedQueueSize > 0 && (
+                <TouchableOpacity 
+                  style={[styles.syncBtn, { backgroundColor: colors.danger500 + '15', borderWidth: 1, borderColor: colors.danger500, flex: 0.8 }]} 
+                  onPress={handleClearFailedScans}
+                >
+                  <Ionicons name="trash-bin-outline" size={16} color={colors.danger500} />
+                  <Text style={[styles.btnText, { color: colors.danger500 }]}>Bersihkan Gagal</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </View>
+
         {/* Security & System Actions */}
         <View style={styles.section}>
           <View style={styles.sectionTitleRow}>
@@ -380,4 +550,16 @@ const getStyles = (colors: any) =>
     saveBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, backgroundColor: colors.primary500, paddingVertical: Spacing.md, borderRadius: BorderRadius.md, marginTop: Spacing.lg },
     saveBtnText: { color: colors.white, fontWeight: '700', fontSize: FontSize.sm },
     versionText: { fontSize: FontSize.xs, fontWeight: '800', color: colors.success500, backgroundColor: colors.success500 + '15', paddingHorizontal: Spacing.sm, paddingVertical: 2, borderRadius: BorderRadius.sm },
+    metricRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: Spacing.xs },
+    metricLabel: { fontSize: FontSize.sm, fontWeight: '700', color: colors.text },
+    metricValue: { fontSize: FontSize.sm, fontWeight: '800', color: colors.text },
+    metricValueTime: { fontSize: FontSize.xs, fontWeight: '700', color: colors.textMuted },
+    statusBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    statusDot: { width: 8, height: 8, borderRadius: 4 },
+    statusText: { fontSize: FontSize.xs, fontWeight: '800' },
+    failureItem: { flexDirection: 'row', gap: Spacing.sm, backgroundColor: colors.surface900, padding: Spacing.sm, borderRadius: BorderRadius.md, borderWidth: 1, borderColor: colors.surface600, marginTop: 4 },
+    failureTime: { fontSize: FontSize.xs, fontWeight: '700', color: colors.textMuted, width: 64 },
+    failureText: { fontSize: FontSize.xs, color: colors.danger500, flex: 1 },
+    syncBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: BorderRadius.md },
+    btnText: { fontSize: FontSize.xs, fontWeight: '700', color: colors.white },
   });

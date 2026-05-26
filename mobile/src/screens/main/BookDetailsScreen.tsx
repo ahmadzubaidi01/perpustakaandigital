@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity, Alert, Modal, TextInput, KeyboardAvoidingView, Platform, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { CachedImage } from '../../components/CachedImage';
 import api, { booksAPI, reviewsAPI, qrAPI } from '../../services/api';
+import { resolveImageUrl } from '../../utils/imageUtils';
 import { getCachedBooks } from '../../services/db';
 import { checkOnlineStatus } from '../../services/syncService';
 import { useAuthStore } from '../../store/authStore';
@@ -264,9 +266,12 @@ export default function BookDetailsScreen({ route, navigation }: any) {
         <View style={styles.headerCard}>
           <View style={styles.coverPlaceholder}>
             {book.cover_image_url ? (
-              <Image
-                source={{ uri: book.cover_image_url.startsWith('http') ? book.cover_image_url : `${(api.defaults.baseURL || '').replace('/api', '')}${book.cover_image_url}` }}
+              <CachedImage
+                remoteUri={resolveImageUrl(book.cover_image_url) || ''}
                 style={{ width: '100%', height: '100%', resizeMode: 'cover' }}
+                fallbackIcon="book"
+                fallbackIconSize={80}
+                fallbackIconColor={colors.surface500}
               />
             ) : (
               <Ionicons name="book" size={80} color={colors.surface500} />

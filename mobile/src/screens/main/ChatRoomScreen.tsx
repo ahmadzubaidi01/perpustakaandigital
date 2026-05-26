@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -99,8 +99,36 @@ export default function ChatRoomScreen({ route, navigation }: any) {
     }
   };
 
+  // IMPORTANT: Use useCallback with stable references for socket event handlers
+  // so we can safely add/remove only OUR specific handlers without breaking global listeners
+  const handleIncomingMessage = useCallback((msg: any) => {
+    if (msg.conversation_id === conversation.conversation_id) {
+      setMessages((prev) => {
+        if (prev.some((m) => m.message_id === msg.message_id)) return prev;
+        return [msg, ...prev];
+      });
+      // Auto mark as read since user is viewing this conversation
+      chatAPI.markRead(conversation.conversation_id).catch(() => {});
+      emitReadReceipt(conversation.conversation_id);
+    }
+  }, [conversation.conversation_id]);
+
+  const handleTypingEvent = useCallback((data: any) => {
+    if (data.conversation_id === conversation.conversation_id && data.user_id === otherParticipant?.user_id) {
+      setOtherTyping(data.typing);
+    }
+  }, [conversation.conversation_id, otherParticipant?.user_id]);
+
+  const handleReadEvent = useCallback((data: any) => {
+    if (data.conversation_id === conversation.conversation_id && data.user_id === otherParticipant?.user_id) {
+      setMessages((prev) =>
+        prev.map((m) => (m.sender_id === user?.user_id ? { ...m, is_read: true } : m))
+      );
+    }
+  }, [conversation.conversation_id, otherParticipant?.user_id, user?.user_id]);
+
   useEffect(() => {
-    // Set active conversation for notification suppression
+    // Set active conversation for notification suppression (so global listener won't push tray notif)
     useNotificationStore.getState().setActiveConversationId(conversation.conversation_id);
 
     fetchMessages(1, true);
@@ -110,44 +138,28 @@ export default function ChatRoomScreen({ route, navigation }: any) {
       joinConversation(conversation.conversation_id);
       markAsRead();
 
-      socket.on('chat:message', (msg: any) => {
-        if (msg.conversation_id === conversation.conversation_id) {
-          setMessages((prev) => {
-            if (prev.some((m) => m.message_id === msg.message_id)) return prev;
-            return [msg, ...prev];
-          });
-          markAsRead();
-        }
-      });
-
-      socket.on('chat:typing', (data: any) => {
-        if (data.conversation_id === conversation.conversation_id && data.user_id === otherParticipant?.user_id) {
-          setOtherTyping(data.typing);
-        }
-      });
-
-      socket.on('chat:read', (data: any) => {
-        if (data.conversation_id === conversation.conversation_id && data.user_id === otherParticipant?.user_id) {
-          setMessages((prev) =>
-            prev.map((m) => (m.sender_id === user?.user_id ? { ...m, is_read: true } : m))
-          );
-        }
-      });
+      // Add our LOCAL handlers — these are specific function references,
+      // so removing them later won't remove the global handler from SocketNotificationListener
+      socket.on('chat:message', handleIncomingMessage);
+      socket.on('chat:typing', handleTypingEvent);
+      socket.on('chat:read', handleReadEvent);
     }
 
     return () => {
       // Clear active conversation
       useNotificationStore.getState().setActiveConversationId(null);
 
-      if (socket) {
+      const socketInstance = getSocket();
+      if (socketInstance) {
         leaveConversation(conversation.conversation_id);
-        socket.off('chat:message');
-        socket.off('chat:typing');
-        socket.off('chat:read');
+        // CRITICAL: Remove only OUR specific handlers, not all handlers for the event
+        socketInstance.off('chat:message', handleIncomingMessage);
+        socketInstance.off('chat:typing', handleTypingEvent);
+        socketInstance.off('chat:read', handleReadEvent);
       }
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     };
-  }, [conversation]);
+  }, [conversation.conversation_id, handleIncomingMessage, handleTypingEvent, handleReadEvent]);
 
   const handleTextChange = (text: string) => {
     setMessageText(text);

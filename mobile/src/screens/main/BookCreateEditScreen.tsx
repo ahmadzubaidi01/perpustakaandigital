@@ -6,6 +6,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useAuthStore } from '../../store/authStore';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 import api, { booksAPI, categoriesAPI, regionsAPI } from '../../services/api';
+import { resolveImageUrl } from '../../utils/imageUtils';
 import * as ImagePicker from 'expo-image-picker';
 
 export default function BookCreateEditScreen({ route, navigation }: any) {
@@ -67,7 +68,7 @@ export default function BookCreateEditScreen({ route, navigation }: any) {
           setBookDescription(b.book_description || '');
           setSchoolId(b.school_id || null);
           if (b.cover_image_url) {
-            setCoverImageUri(b.cover_image_url.startsWith('http') ? b.cover_image_url : `${(api.defaults.baseURL || '').replace('/api', '')}${b.cover_image_url}`);
+            setCoverImageUri(resolveImageUrl(b.cover_image_url));
           } else {
             setCoverImageUri(null);
           }

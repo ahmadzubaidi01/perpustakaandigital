@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, ActivityIndicator, Image } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
+import { CachedImage } from '../../components/CachedImage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../store/authStore';
-import api, { booksAPI, borrowingsAPI, dashboardAPI } from '../../services/api';
+import { booksAPI, borrowingsAPI, dashboardAPI } from '../../services/api';
+import { resolveImageUrl } from '../../utils/imageUtils';
 import { useTheme } from '../../context/ThemeContext';
 import { useNetwork } from '../../context/NetworkContext';
 import { useNotificationStore } from '../../store/notificationStore';
@@ -261,12 +263,7 @@ export default function HomeScreen({ navigation }: any) {
           <Text style={styles.sectionTitle}>Buku Terbaru</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {recentBooks.map((book, idx) => {
-              const showImage = !!book.cover_image_url;
-              const coverUri = showImage
-                ? (book.cover_image_url.startsWith('http')
-                    ? book.cover_image_url
-                    : `${(api.defaults.baseURL || '').replace('/api', '')}${book.cover_image_url}`)
-                : null;
+              const coverUri = resolveImageUrl(book.cover_image_url);
 
               return (
                 <TouchableOpacity 
@@ -277,7 +274,7 @@ export default function HomeScreen({ navigation }: any) {
                 >
                   <View style={styles.bookCover}>
                     {coverUri ? (
-                      <Image source={{ uri: coverUri }} style={styles.bookCoverImage} />
+                      <CachedImage remoteUri={coverUri} style={styles.bookCoverImage} />
                     ) : (
                       <Ionicons name="book" size={28} color={colors.surface500} />
                     )}

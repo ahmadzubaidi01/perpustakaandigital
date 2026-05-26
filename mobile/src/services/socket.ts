@@ -1,5 +1,6 @@
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL } from '../constants/theme';
+import { useSyncDiagnosticsStore } from '../store/syncDiagnosticsStore';
 
 const SOCKET_URL = API_BASE_URL.replace('/api', '');
 
@@ -24,14 +25,17 @@ export const initSocket = (token: string): Socket | null => {
 
   socket.on('connect', () => {
     console.log('[Socket.IO] Connected:', socket?.id);
+    useSyncDiagnosticsStore.getState().setWebsocketStability(true);
   });
 
   socket.on('disconnect', (reason) => {
     console.log('[Socket.IO] Disconnected:', reason);
+    useSyncDiagnosticsStore.getState().incrementWebsocketDisconnects();
   });
 
   socket.on('connect_error', (error) => {
     console.warn('[Socket.IO] Connection error:', error.message);
+    useSyncDiagnosticsStore.getState().setWebsocketStability(false);
   });
 
   return socket;

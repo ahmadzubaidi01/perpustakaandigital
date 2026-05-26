@@ -1,8 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, RefreshControl, Dimensions, ActivityIndicator, Image } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, RefreshControl, Dimensions, ActivityIndicator } from 'react-native';
+import { CachedImage } from '../../components/CachedImage';
 import { Ionicons } from '@expo/vector-icons';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
-import api, { booksAPI, categoriesAPI } from '../../services/api';
+import { booksAPI, categoriesAPI } from '../../services/api';
+import { resolveImageUrl } from '../../utils/imageUtils';
 import { cacheBooks, getCachedBooks } from '../../services/db';
 import { checkOnlineStatus } from '../../services/syncService';
 import { useTheme } from '../../context/ThemeContext';
@@ -135,12 +137,7 @@ export default function BooksScreen({ navigation }: any) {
   }[s] || colors.surface400);
 
   const renderBook = ({ item }: any) => {
-    const showImage = !!item.cover_image_url;
-    const coverUri = showImage
-      ? (item.cover_image_url.startsWith('http')
-          ? item.cover_image_url
-          : `${(api.defaults.baseURL || '').replace('/api', '')}${item.cover_image_url}`)
-      : null;
+    const coverUri = resolveImageUrl(item.cover_image_url);
 
     if (viewMode === 'grid') {
       return (
@@ -151,7 +148,7 @@ export default function BooksScreen({ navigation }: any) {
         >
           <View style={styles.gridBookCover}>
             {coverUri ? (
-              <Image source={{ uri: coverUri }} style={{ width: '100%', height: '100%', resizeMode: 'cover' }} />
+              <CachedImage remoteUri={coverUri} style={{ width: '100%', height: '100%', resizeMode: 'cover' }} />
             ) : (
               <Ionicons name="book" size={32} color={colors.surface400} />
             )}
@@ -178,7 +175,7 @@ export default function BooksScreen({ navigation }: any) {
       >
         <View style={styles.listBookCover}>
           {coverUri ? (
-            <Image source={{ uri: coverUri }} style={{ width: '100%', height: '100%', resizeMode: 'cover' }} />
+            <CachedImage remoteUri={coverUri} style={{ width: '100%', height: '100%', resizeMode: 'cover' }} />
           ) : (
             <Ionicons name="book" size={24} color={colors.surface400} />
           )}

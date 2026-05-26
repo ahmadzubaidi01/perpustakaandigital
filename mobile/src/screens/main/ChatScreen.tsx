@@ -1,18 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Modal, TextInput, ActivityIndicator, Platform, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 import { chatAPI } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
-import { getSocket, initSocket } from '../../services/socket';
+import { getSocket } from '../../services/socket';
 import { useTheme } from '../../context/ThemeContext';
-import * as SecureStore from 'expo-secure-store';
+import { useNotificationStore } from '../../store/notificationStore';
 
 export default function ChatScreen({ navigation }: any) {
   const { user } = useAuthStore();
   const { colors } = useTheme();
   const s = getStyles(colors);
+  const { refreshTrigger } = useNotificationStore();
 
   const [conversations, setConversations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,71 +52,71 @@ export default function ChatScreen({ navigation }: any) {
     }
   };
 
+  // Handler for incoming chat messages — updates conversation list in real-time
+  const handleNewMessage = useCallback((msg: any) => {
+    setConversations((prev) => {
+      const index = prev.findIndex((c) => c.conversation_id === msg.conversation_id);
+      if (index > -1) {
+        const updated = [...prev];
+        updated[index] = {
+          ...updated[index],
+          last_message: msg,
+          unread_count: msg.sender_id !== user?.user_id ? updated[index].unread_count + 1 : updated[index].unread_count,
+          last_message_at: msg.created_at,
+        };
+        // Re-sort conversations by last_message_at DESC
+        return updated.sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime());
+      } else {
+        // If conversation is new, fetch full list
+        fetchConversations();
+        return prev;
+      }
+    });
+  }, [user?.user_id]);
+
+  // Handler for online users status
+  const handleUserOnline = useCallback((data: any) => {
+    if (data.online_users) {
+      setOnlineUsers(data.online_users);
+    }
+  }, []);
+
   useEffect(() => {
     fetchConversations();
 
-    let socket = getSocket();
-    const handleNewMessage = (msg: any) => {
-      // Dynamic update conversation on list without full refresh
-      setConversations((prev) => {
-        const index = prev.findIndex((c) => c.conversation_id === msg.conversation_id);
-        if (index > -1) {
-          const updated = [...prev];
-          updated[index] = {
-            ...updated[index],
-            last_message: msg,
-            unread_count: msg.sender_id !== user?.user_id ? updated[index].unread_count + 1 : updated[index].unread_count,
-            last_message_at: msg.created_at,
-          };
-          // Re-sort conversations by last_message_at DESC
-          return updated.sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime());
-        } else {
-          // If conversation is new, fetch list
-          fetchConversations();
-          return prev;
-        }
-      });
-    };
-
-    const handleUserOnline = (data: any) => {
-      if (data.online_users) {
-        setOnlineUsers(data.online_users);
-      }
-    };
-
+    // Use the global socket (initialized by SocketNotificationListener) — do NOT create a new one
+    const socket = getSocket();
     if (socket) {
       socket.on('chat:message', handleNewMessage);
       socket.on('user:online', handleUserOnline);
-      // Request initial list of online users by emitting or socket status check
+      // Request initial online users
       socket.emit('user:online:request');
-    } else {
-      SecureStore.getItemAsync('access_token').then((token) => {
-        if (token) {
-          const newSocket = initSocket(token);
-          if (newSocket) {
-            newSocket.on('chat:message', handleNewMessage);
-            newSocket.on('user:online', handleUserOnline);
-          }
-        }
-      });
     }
 
     return () => {
       const socketInstance = getSocket();
       if (socketInstance) {
+        // Remove only our specific handler references
         socketInstance.off('chat:message', handleNewMessage);
         socketInstance.off('user:online', handleUserOnline);
       }
     };
-  }, [user]);
+  }, [handleNewMessage, handleUserOnline]);
 
+  // Also refresh on screen focus and when notification store triggers refresh
   useEffect(() => {
-    fetchConversations();
     const unsubscribe = navigation?.addListener('focus', () => {
       fetchConversations();
     });
     return unsubscribe;
   }, [navigation]);
+
+  // Re-fetch when refreshTrigger changes (from SocketNotificationListener)
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      fetchConversations();
+    }
+  }, [refreshTrigger]);
 
   useEffect(() => {
     if (searchQuery.trim() === '') {

@@ -1,12 +1,19 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { API_BASE_URL } from '../constants/theme';
+import { useSyncDiagnosticsStore } from '../store/syncDiagnosticsStore';
 
 const api: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
   headers: { 'Content-Type': 'application/json' },
 });
+
+let cachedAccessToken: string | null = null;
+
+export const setCachedAccessToken = (token: string | null) => {
+  cachedAccessToken = token;
+};
 
 // ==========================================
 // CIRCUIT BREAKER IMPLEMENTATION
@@ -87,7 +94,18 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
     ));
   }
 
-  const token = await SecureStore.getItemAsync('access_token');
+  // Inject startTime for diagnostics
+  (config as any).metadata = { startTime: Date.now() };
+  
+  // Track burst requests
+  useSyncDiagnosticsStore.getState().incrementRequestBurst();
+
+  let token = cachedAccessToken;
+  if (!token) {
+    token = await SecureStore.getItemAsync('access_token');
+    cachedAccessToken = token;
+  }
+
   if (token && config.headers) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -98,11 +116,26 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
 api.interceptors.response.use(
   (response) => {
     circuitBreaker.recordSuccess();
+
+    // Log request latency
+    const metadata = (response.config as any).metadata;
+    if (metadata?.startTime) {
+      const duration = Date.now() - metadata.startTime;
+      useSyncDiagnosticsStore.getState().recordApiResponseTime(duration);
+    }
+
     return response;
   },
   async (error) => {
     const originalRequest = error.config;
     const status = error.response?.status;
+
+    // Log error request latency
+    const metadata = (originalRequest as any)?.metadata;
+    if (metadata?.startTime) {
+      const duration = Date.now() - metadata.startTime;
+      useSyncDiagnosticsStore.getState().recordApiResponseTime(duration);
+    }
 
     // Track circuit breaker states
     const isNetworkError = !error.response;
@@ -142,6 +175,7 @@ api.interceptors.response.use(
           
           await SecureStore.setItemAsync('access_token', access_token);
           await SecureStore.setItemAsync('refresh_token', newRefresh);
+          cachedAccessToken = access_token;
           
           originalRequest.headers.Authorization = `Bearer ${access_token}`;
           processQueue(null, access_token);

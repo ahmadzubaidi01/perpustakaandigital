@@ -71,24 +71,29 @@ export default function ChatPage() {
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
 
-  // Initialize socket
+  // Initialize socket listeners for real-time chat
   useEffect(() => {
     const socket = initSocket();
     if (!socket) return;
 
-    socket.on('chat:message', (msg: ChatMessage) => {
+    // Named handler references so we can safely remove only OUR listeners
+    const handleMessage = (msg: ChatMessage) => {
       addMessage(msg);
       // Refresh conversations to update last message
       loadConversations();
-    });
+    };
 
-    socket.on('user:online', (data: { online_users: number[] }) => {
+    const handleOnline = (data: { online_users: number[] }) => {
       setOnlineUsers(data.online_users);
-    });
+    };
+
+    socket.on('chat:message', handleMessage);
+    socket.on('user:online', handleOnline);
 
     return () => {
-      socket.off('chat:message');
-      socket.off('user:online');
+      // Remove ONLY our specific handler references
+      socket.off('chat:message', handleMessage);
+      socket.off('user:online', handleOnline);
     };
   }, [addMessage, setOnlineUsers, loadConversations]);
 

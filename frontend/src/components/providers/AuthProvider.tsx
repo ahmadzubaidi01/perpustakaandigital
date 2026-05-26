@@ -1,14 +1,18 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { useAuthStore, useNotificationStore } from '@/lib/store';
 import { authAPI } from '@/lib/api';
 import Cookies from 'js-cookie';
-import { initSocket, disconnectSocket } from '@/lib/socket';
+import { initSocket, disconnectSocket, getSocket } from '@/lib/socket';
 import toast from 'react-hot-toast';
 
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
   const { user, setUser, setLoading, logout } = useAuthStore();
+
+  // Use refs to track our specific handler functions for safe cleanup
+  const notificationHandlerRef = useRef<((notification: any) => void) | null>(null);
+  const chatHandlerRef = useRef<((msg: any) => void) | null>(null);
 
   useEffect(() => {
     const initAuth = async () => {
@@ -51,9 +55,16 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
 
     const socket = initSocket();
     if (socket) {
+      // Remove previous handler references if they exist (prevent duplicates on re-render)
+      if (notificationHandlerRef.current) {
+        socket.off('notification:new', notificationHandlerRef.current);
+      }
+      if (chatHandlerRef.current) {
+        socket.off('chat:message', chatHandlerRef.current);
+      }
+
       // 1. Listen to new system-wide notifications (reminders, borrowing events, returns, etc.)
-      socket.off('notification:new'); // avoid duplicate listeners
-      socket.on('notification:new', (notification: any) => {
+      const handleNotification = (notification: any) => {
         console.log('[Socket] Global notification:', notification);
         
         // Increment global unread count
@@ -68,11 +79,10 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
             <span className="text-xs text-muted-foreground">{message}</span>
           </div>
         ), { icon: '🔔' });
-      });
+      };
 
       // 2. Listen to incoming chat messages globally
-      socket.off('chat:message'); // avoid duplicate listeners
-      socket.on('chat:message', (msg: any) => {
+      const handleChatMessage = (msg: any) => {
         console.log('[Socket] Global chat message:', msg);
         
         // Skip if message was sent by self
@@ -91,13 +101,29 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
             <span className="text-xs text-muted-foreground truncate max-w-[200px]">{text}</span>
           </div>
         ), { icon: '💬' });
-      });
+      };
+
+      // Store refs for cleanup
+      notificationHandlerRef.current = handleNotification;
+      chatHandlerRef.current = handleChatMessage;
+
+      // Register handlers using specific function references
+      socket.on('notification:new', handleNotification);
+      socket.on('chat:message', handleChatMessage);
     }
 
     return () => {
+      const socket = getSocket();
       if (socket) {
-        socket.off('notification:new');
-        socket.off('chat:message');
+        // Remove ONLY our specific handler references, not all listeners
+        if (notificationHandlerRef.current) {
+          socket.off('notification:new', notificationHandlerRef.current);
+          notificationHandlerRef.current = null;
+        }
+        if (chatHandlerRef.current) {
+          socket.off('chat:message', chatHandlerRef.current);
+          chatHandlerRef.current = null;
+        }
       }
     };
   }, [user]);
