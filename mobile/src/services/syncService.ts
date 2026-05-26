@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import api, { qrAPI, borrowingsAPI, booksAPI, usersAPI, notificationsAPI } from './api';
+import { API_BASE_URL } from '../constants/theme';
 import { 
   getPendingScans, 
   markScanSynced, 
@@ -39,7 +40,7 @@ export const checkOnlineStatus = async (): Promise<boolean> => {
     const id = setTimeout(() => controller.abort(), 3000);
     
     // Ping online API health endpoint directly using native fetch to bypass circuit breakers/Axios
-    const res = await fetch('https://www.perpustakaanahmad.my.id/api/health', {
+    const res = await fetch(`${API_BASE_URL}/health`, {
       method: 'GET',
       headers: {
         'Accept': 'application/json',
