@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
-import { User, Mail, Phone, Lock, Save, BookOpen, MapPin } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { User, Mail, Phone, Lock, Save, BookOpen, MapPin, Image as ImageIcon, Shield, Hash } from 'lucide-react';
 import { useAuthStore } from '@/lib/store';
-import { usersAPI } from '@/lib/api';
+import { usersAPI, getMediaUrl } from '@/lib/api';
 import toast from 'react-hot-toast';
 
 // Reusable UI components
@@ -22,6 +22,18 @@ export default function ProfilePage() {
     phone_number: user?.phone_number || '',
     class_name: user?.class_name || '',
   });
+
+  // Set default values when user is loaded/hydrated
+  useEffect(() => {
+    if (user) {
+      setProfileForm({
+        full_name: user.full_name || '',
+        phone_number: user.phone_number || '',
+        class_name: user.class_name || '',
+      });
+    }
+  }, [user]);
+
   const [passwordForm, setPasswordForm] = useState({
     current_password: '',
     new_password: '',
@@ -29,24 +41,44 @@ export default function ProfilePage() {
   });
   const [saving, setSaving] = useState(false);
 
+  // Profile image upload state
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [profilePhoto, setProfilePhoto] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setProfilePhoto(file);
+      setPhotoPreview(URL.createObjectURL(file));
+    }
+  };
+
   const handleProfileSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     try {
       const formData = new FormData();
-      formData.append('full_name', profileForm.full_name);
+      formData.append('full_name', profileForm.full_name.trim());
       if (profileForm.phone_number !== undefined) {
-        formData.append('phone_number', profileForm.phone_number);
+        formData.append('phone_number', profileForm.phone_number.trim());
       }
       if (profileForm.class_name !== undefined) {
-        formData.append('class_name', profileForm.class_name);
+        formData.append('class_name', profileForm.class_name.trim());
       }
-      const res = await usersAPI.updateProfile(formData);
-      setUser({ ...user!, ...res.data.data });
-      toast.success('Profil berhasil diperbarui');
+      if (profilePhoto) {
+        formData.append('profile_photo', profilePhoto);
+      }
+
+      await usersAPI.updateProfile(formData);
+      
+      toast.success('Profil berhasil diperbarui! Memuat ulang halaman...');
+      // Force reload page to refresh headers, avatars, and avoid frontend state synchronization mismatch
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Gagal memperbarui profil');
-    } finally {
       setSaving(false);
     }
   };
@@ -98,90 +130,78 @@ export default function ProfilePage() {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-4xl">
+    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
       <PageHeader
         title="Profil Saya"
         description="Kelola informasi profil personal dan keamanan akun Anda."
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Left Column - Card Profile Overview */}
-        <div className="md:col-span-1 space-y-6">
-          <Card hoverable={false} className="p-6 flex flex-col items-center text-center">
-            <div className="w-24 h-24 rounded-2xl flex items-center justify-center text-3xl font-extrabold bg-primary-100 text-primary-600 dark:bg-primary-950/40 dark:text-primary-400 shrink-0 shadow-inner mb-4 transition-transform hover:scale-105 duration-300">
-              {user?.full_name?.charAt(0)?.toUpperCase() || 'U'}
+      <Tabs
+        activeKey={tab}
+        onChange={(key) => setTab(key as 'profile' | 'password')}
+        items={[
+          { key: 'profile', label: 'Informasi Profil', icon: User },
+          { key: 'password', label: 'Keamanan & Sandi', icon: Lock },
+        ]}
+        className="w-full"
+      />
+
+      {tab === 'profile' ? (
+        <form onSubmit={handleProfileSave} className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* Left Side: Avatar Upload/Card Display */}
+          <Card hoverable={false} className="space-y-4 flex flex-col items-center justify-center py-8 p-6">
+            <div className="relative group w-32 h-32 rounded-full overflow-hidden border border-border flex items-center justify-center bg-muted">
+              {photoPreview ? (
+                <img src={photoPreview} alt="Preview Avatar" className="w-full h-full object-cover" />
+              ) : user?.profile_photo_url ? (
+                <img src={getMediaUrl(user.profile_photo_url)} alt="Avatar" className="w-full h-full object-cover" />
+              ) : (
+                <div className="text-4xl font-extrabold text-primary-600 dark:text-primary-400">
+                  {user?.full_name?.charAt(0)?.toUpperCase() || 'U'}
+                </div>
+              )}
             </div>
             
-            <h3 className="text-lg font-bold text-foreground leading-tight">{user?.full_name}</h3>
-            <p className="text-sm text-muted-foreground mt-1 mb-3 break-all">{user?.email_address}</p>
-            
-            <Badge variant={user?.user_role === 'super_admin' ? 'danger' : 'primary'} className="mb-4">
-              {getDynamicRoleLabel(user)}
-            </Badge>
+            <div className="text-center">
+              <p className="text-xs font-semibold mb-2 text-[var(--heading)]">Foto Profil (Ubah)</p>
+              <input 
+                type="file" 
+                accept="image/*" 
+                onChange={handlePhotoChange} 
+                ref={fileInputRef} 
+                className="hidden" 
+                id="profile-avatar-upload"
+              />
+              <label 
+                htmlFor="profile-avatar-upload" 
+                className="inline-flex items-center justify-center font-medium h-8 px-3 text-xs rounded-md border border-border bg-transparent text-foreground hover:bg-secondary active:scale-[0.98] transition-all cursor-pointer"
+              >
+                Pilih Foto
+              </label>
+            </div>
 
-            {/* School / Region Details if they exist */}
-            {(user?.school || user?.district || user?.regency || user?.student_id_number) && (
-              <div className="w-full pt-4 border-t border-border text-left space-y-3 text-xs text-muted-foreground">
-                {user.student_id_number && (
-                  <div className="flex justify-between items-center bg-muted/50 p-2 rounded-lg">
-                    <span className="font-semibold text-foreground">NISN:</span>
-                    <span className="font-mono bg-background px-1.5 py-0.5 rounded border border-border">{user.student_id_number}</span>
-                  </div>
-                )}
-                {user.school && (
-                  <div className="flex items-start gap-2">
-                    <BookOpen size={14} className="mt-0.5 text-primary-500 shrink-0" />
-                    <div>
-                      <div className="font-semibold text-foreground">Sekolah</div>
-                      <div className="text-[11px] leading-tight">{user.school.school_name}</div>
-                    </div>
-                  </div>
-                )}
-                {(user.district || user.regency) && (
-                  <div className="flex items-start gap-2">
-                    <MapPin size={14} className="mt-0.5 text-primary-500 shrink-0" />
-                    <div>
-                      <div className="font-semibold text-foreground">Wilayah</div>
-                      <div className="text-[11px] leading-tight">
-                        {[user.district?.district_name, user.regency?.regency_name].filter(Boolean).join(', ')}
-                      </div>
-                    </div>
-                  </div>
-                )}
+            <div className="w-full pt-4 border-t border-border text-left space-y-1">
+              <h3 className="text-sm font-bold text-center text-foreground leading-tight">{user?.full_name}</h3>
+              <p className="text-xs text-center text-muted-foreground mt-1 mb-2 break-all">{user?.email_address}</p>
+              <div className="flex justify-center">
+                <Badge variant={user?.user_role === 'super_admin' ? 'danger' : 'primary'}>
+                  {getDynamicRoleLabel(user)}
+                </Badge>
               </div>
-            )}
+            </div>
           </Card>
-        </div>
 
-        {/* Right Column - Form Tabs */}
-        <div className="md:col-span-2 space-y-6">
-          <Tabs
-            activeKey={tab}
-            onChange={(key) => setTab(key as 'profile' | 'password')}
-            items={[
-              { key: 'profile', label: 'Informasi Profil', icon: User },
-              { key: 'password', label: 'Keamanan & Sandi', icon: Lock },
-            ]}
-            className="w-full"
-          />
-
-          {tab === 'profile' ? (
-            <Card hoverable={false} className="p-6">
-              <form onSubmit={handleProfileSave} className="space-y-4">
+          {/* Right Side: Form Inputs */}
+          <Card hoverable={false} className="md:col-span-2 p-8">
+            <h3 className="text-lg font-bold text-foreground mb-6">Ubah Informasi Pengguna</h3>
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
-                  label="Nama Lengkap"
+                  label="Nama Lengkap *"
                   leftIcon={<User size={18} />}
                   value={profileForm.full_name}
                   onChange={(e) => setProfileForm(p => ({ ...p, full_name: e.target.value }))}
                   required
-                />
-                
-                <Input
-                  label="Alamat Email (Terkunci)"
-                  leftIcon={<Mail size={18} />}
-                  value={user?.email_address || ''}
-                  disabled
-                  helperText="Alamat email tidak dapat diubah demi alasan keamanan."
                 />
                 
                 <Input
@@ -191,77 +211,134 @@ export default function ProfilePage() {
                   onChange={(e) => setProfileForm(p => ({ ...p, phone_number: e.target.value }))}
                   placeholder="Contoh: 08123456789"
                 />
+              </div>
 
-                {user?.user_role === 'student_member' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Input
+                  label="Alamat Email (Terkunci)"
+                  leftIcon={<Mail size={18} />}
+                  value={user?.email_address || ''}
+                  disabled
+                  helperText="Email terkunci demi alasan keamanan."
+                />
+
+                <Input
+                  label="Role Pengguna (Terkunci)"
+                  leftIcon={<Shield size={18} />}
+                  value={getDynamicRoleLabel(user)}
+                  disabled
+                />
+              </div>
+
+              {user?.user_role === 'student_member' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Input
-                    label="Kelas"
+                    label="Nomor Induk Siswa Nasional / NISN (Terkunci)"
+                    leftIcon={<Hash size={18} />}
+                    value={user?.student_id_number || 'Tidak Ada NISN'}
+                    disabled
+                  />
+
+                  <Input
+                    label="Kelas *"
+                    leftIcon={<BookOpen size={18} />}
                     value={profileForm.class_name}
                     onChange={(e) => setProfileForm(p => ({ ...p, class_name: e.target.value }))}
                     placeholder="Contoh: XII IPA 1"
+                    required
                   />
-                )}
-
-                <div className="pt-4 border-t border-border flex justify-end">
-                  <Button
-                    type="submit"
-                    variant="primary"
-                    size="md"
-                    isLoading={saving}
-                    leftIcon={<Save size={18} />}
-                  >
-                    Simpan Perubahan
-                  </Button>
                 </div>
-              </form>
-            </Card>
-          ) : (
-            <Card hoverable={false} className="p-6">
-              <form onSubmit={handlePasswordSave} className="space-y-4">
-                <Input
-                  label="Password Saat Ini"
-                  type="password"
-                  leftIcon={<Lock size={18} />}
-                  value={passwordForm.current_password}
-                  onChange={(e) => setPasswordForm(p => ({ ...p, current_password: e.target.value }))}
-                  required
-                />
-                
-                <Input
-                  label="Password Baru"
-                  type="password"
-                  leftIcon={<Lock size={18} />}
-                  value={passwordForm.new_password}
-                  onChange={(e) => setPasswordForm(p => ({ ...p, new_password: e.target.value }))}
-                  placeholder="Minimal 8 karakter"
-                  required
-                  helperText="Sandi baru harus terdiri dari minimal 8 karakter."
-                />
-                
-                <Input
-                  label="Konfirmasi Password Baru"
-                  type="password"
-                  leftIcon={<Lock size={18} />}
-                  value={passwordForm.confirm_password}
-                  onChange={(e) => setPasswordForm(p => ({ ...p, confirm_password: e.target.value }))}
-                  required
-                />
+              )}
 
-                <div className="pt-4 border-t border-border flex justify-end">
-                  <Button
-                    type="submit"
-                    variant="primary"
-                    size="md"
-                    isLoading={saving}
-                    leftIcon={<Lock size={18} />}
-                  >
-                    Perbarui Password
-                  </Button>
+              {/* Regional Hierarchies */}
+              {user?.user_role !== 'super_admin' && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-border">
+                  <Input
+                    label="Kabupaten (Terkunci)"
+                    leftIcon={<MapPin size={16} />}
+                    value={user?.regency?.regency_name || '-'}
+                    disabled
+                  />
+
+                  <Input
+                    label="Kecamatan (Terkunci)"
+                    leftIcon={<MapPin size={16} />}
+                    value={user?.district?.district_name || '-'}
+                    disabled
+                  />
+
+                  <Input
+                    label="Sekolah / Unit (Terkunci)"
+                    leftIcon={<BookOpen size={16} />}
+                    value={user?.school?.school_name || '-'}
+                    disabled
+                  />
                 </div>
-              </form>
-            </Card>
-          )}
+              )}
+
+              <div className="pt-6 border-t border-border flex justify-end">
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="md"
+                  isLoading={saving}
+                  leftIcon={<Save size={18} />}
+                >
+                  Simpan Perubahan
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </form>
+      ) : (
+        <div className="max-w-xl mx-auto">
+          <Card hoverable={false} className="p-8">
+            <h3 className="text-lg font-bold text-foreground mb-6">Ubah Sandi Keamanan</h3>
+            <form onSubmit={handlePasswordSave} className="space-y-4">
+              <Input
+                label="Password Saat Ini"
+                type="password"
+                leftIcon={<Lock size={18} />}
+                value={passwordForm.current_password}
+                onChange={(e) => setPasswordForm(p => ({ ...p, current_password: e.target.value }))}
+                required
+              />
+              
+              <Input
+                label="Password Baru"
+                type="password"
+                leftIcon={<Lock size={18} />}
+                value={passwordForm.new_password}
+                onChange={(e) => setPasswordForm(p => ({ ...p, new_password: e.target.value }))}
+                placeholder="Minimal 8 karakter"
+                required
+                helperText="Sandi baru harus terdiri dari minimal 8 karakter."
+              />
+              
+              <Input
+                label="Konfirmasi Password Baru"
+                type="password"
+                leftIcon={<Lock size={18} />}
+                value={passwordForm.confirm_password}
+                onChange={(e) => setPasswordForm(p => ({ ...p, confirm_password: e.target.value }))}
+                required
+              />
+
+              <div className="pt-4 border-t border-border flex justify-end">
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="md"
+                  isLoading={saving}
+                  leftIcon={<Lock size={18} />}
+                >
+                  Perbarui Password
+                </Button>
+              </div>
+            </form>
+          </Card>
         </div>
-      </div>
+      )}
     </div>
   );
 }

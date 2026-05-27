@@ -174,7 +174,7 @@ api.interceptors.response.use(
 
 // Transparently deduplicate GET requests
 const originalGet = api.get;
-api.get = function<T = any, R = AxiosResponse<T>, D = any>(url: string, config?: any): Promise<R> {
+api.get = function<T = any, R = AxiosResponse<T>, D = any>(this: any, url: string, config?: any): Promise<R> {
   const requestKey = getRequestKey({ method: 'get', url, ...config });
   if (inFlightRequests.has(requestKey)) {
     return inFlightRequests.get(requestKey)!;
@@ -187,7 +187,7 @@ api.get = function<T = any, R = AxiosResponse<T>, D = any>(url: string, config?:
     .catch((err) => {
       inFlightRequests.delete(requestKey);
       throw err;
-    });
+    }) as Promise<R>;
   inFlightRequests.set(requestKey, promise);
   return promise;
 } as any;
@@ -341,6 +341,7 @@ export const inventoryAPI = {
     api.patch(`/v1/inventory/qr/${bookQrId}/status`, { qr_status, notes }),
   bulkUpdateStatus: (qr_ids: number[], qr_status: string, notes?: string) =>
     api.patch('/v1/inventory/qr/bulk-status', { qr_ids, qr_status, notes }),
+  deleteAnomaly: (book_id: number) => api.delete(`/v1/inventory/anomalies/${book_id}`),
 };
 
 // Helper to resolve media URLs dynamically based on API URL
@@ -348,6 +349,7 @@ export const getMediaUrl = (path: string | null | undefined): string => {
   if (!path) return '';
   if (path.startsWith('http')) return path;
   
-  // Return relative path so that Next.js rewrites/proxy handles it seamlessly
-  return path.startsWith('/') ? path : `/${path}`;
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return `${baseUrl}${cleanPath}`;
 };

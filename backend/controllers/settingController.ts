@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
-import { BorrowingSetting, Book, User, BookQr } from '../models';
+import { BorrowingSetting, Book, User, BookQr, School } from '../models';
 import apiResponse from '../utils/apiResponse';
 import { asyncHandler } from '../middleware/errorHandler';
 import { createAuditLog, buildAuditFromRequest } from '../services/auditService';
@@ -9,7 +9,14 @@ import { AuditActionType, TABLE_NAMES } from '../config/constants';
 import env from '../config/environment';
 
 const getSettings = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const schoolId = req.params.school_id || req.user!.school_id;
+  let schoolId = req.params.school_id || req.user!.school_id;
+  if (!schoolId && req.user!.user_role === 'super_admin') {
+    const firstSchool = await School.findOne({ order: [['school_id', 'ASC']] });
+    if (firstSchool) {
+      schoolId = firstSchool.school_id;
+    }
+  }
+
   if (!schoolId) { apiResponse.badRequest(res, 'School ID required'); return; }
   const settings = await BorrowingSetting.findOne({ where: { school_id: schoolId } });
   if (!settings) { apiResponse.notFound(res, 'Borrowing settings not found for this school'); return; }
@@ -17,7 +24,14 @@ const getSettings = asyncHandler(async (req: Request, res: Response): Promise<vo
 });
 
 const updateSettings = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const schoolId = req.params.school_id || req.user!.school_id;
+  let schoolId = req.params.school_id || req.user!.school_id;
+  if (!schoolId && req.user!.user_role === 'super_admin') {
+    const firstSchool = await School.findOne({ order: [['school_id', 'ASC']] });
+    if (firstSchool) {
+      schoolId = firstSchool.school_id;
+    }
+  }
+
   if (!schoolId) { apiResponse.badRequest(res, 'School ID required'); return; }
   const settings = await BorrowingSetting.findOne({ where: { school_id: schoolId } });
   if (!settings) { apiResponse.notFound(res, 'Settings not found'); return; }

@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ScrollView, RefreshControl, TextInput, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, ScrollView, RefreshControl, TextInput, ActivityIndicator, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../store/authStore';
 import { authAPI, usersAPI } from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 import * as SecureStore from 'expo-secure-store';
+import { resolveImageUrl } from '../../utils/imageUtils';
+import * as ImagePicker from 'expo-image-picker';
 
 export default function ProfileScreen({ navigation }: any) {
   const { user, setUser, logout } = useAuthStore();
@@ -26,12 +28,18 @@ export default function ProfileScreen({ navigation }: any) {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
+  // Profile image upload state
+  const [profilePhotoUri, setProfilePhotoUri] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<any>(null);
+
   // Sync state with user when screen mounts or user changes
   useEffect(() => {
     if (user) {
       setFullName(user.full_name || '');
       setPhoneNumber(user.phone_number || '');
       setClassName(user.class_name || '');
+      setProfilePhotoUri(user.profile_photo_url ? resolveImageUrl(user.profile_photo_url) : null);
+      setImageFile(null);
     }
   }, [user, isEditing]);
 
@@ -66,6 +74,39 @@ export default function ProfileScreen({ navigation }: any) {
     ]);
   };
 
+  const handlePickImage = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Izin Ditolak', 'Aplikasi memerlukan izin galeri untuk memilih foto profil.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        if (asset.fileSize && asset.fileSize > 2 * 1024 * 1024) {
+          Alert.alert('Gagal', 'Ukuran foto maksimal adalah 2MB.');
+          return;
+        }
+        setProfilePhotoUri(asset.uri);
+        setImageFile({
+          uri: asset.uri,
+          name: asset.fileName || `avatar_${Date.now()}.jpg`,
+          type: asset.mimeType || 'image/jpeg',
+        });
+      }
+    } catch (e) {
+      Alert.alert('Gagal', 'Gagal memilih gambar.');
+    }
+  };
+
   const handleSaveProfile = async () => {
     if (!fullName.trim()) {
       Alert.alert('Validasi Gagal', 'Nama lengkap tidak boleh kosong.');
@@ -74,18 +115,31 @@ export default function ProfileScreen({ navigation }: any) {
 
     setSaving(true);
     try {
-      const payload = {
-        full_name: fullName.trim(),
-        phone_number: phoneNumber.trim() || null,
-        class_name: user?.user_role === 'student_member' ? className.trim() || null : undefined,
-      };
-
-      const res = await usersAPI.updateProfile(payload);
-      if (res.data.data) {
-        setUser({ ...user!, ...res.data.data });
-        Alert.alert('Sukses', 'Profil Anda berhasil diperbarui!');
-        setIsEditing(false);
+      const formData = new FormData();
+      formData.append('full_name', fullName.trim());
+      formData.append('phone_number', phoneNumber.trim() || '');
+      if (user?.user_role === 'student_member') {
+        formData.append('class_name', className.trim() || '');
       }
+
+      if (imageFile) {
+        formData.append('profile_photo', {
+          uri: imageFile.uri,
+          name: imageFile.name,
+          type: imageFile.type,
+        } as any);
+      }
+
+      await usersAPI.updateProfile(formData);
+      
+      // Verification reload from backend MySQL to make sure it's successfully saved
+      const verifyRes = await authAPI.getProfile();
+      if (verifyRes.data.data) {
+        setUser(verifyRes.data.data);
+      }
+
+      Alert.alert('Sukses', 'Profil Anda berhasil diperbarui!');
+      setIsEditing(false);
     } catch (err: any) {
       Alert.alert('Gagal', err.response?.data?.message || 'Gagal memperbarui profil.');
     } finally {
@@ -172,9 +226,20 @@ export default function ProfileScreen({ navigation }: any) {
     >
       {/* Avatar & Header */}
       <View style={styles.avatarSection}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{user?.full_name?.charAt(0)?.toUpperCase()}</Text>
-        </View>
+        <TouchableOpacity style={styles.avatarContainer} onPress={handlePickImage} disabled={!isEditing || saving} activeOpacity={0.8}>
+          {profilePhotoUri ? (
+            <Image source={{ uri: profilePhotoUri }} style={styles.avatarImage} />
+          ) : (
+            <View style={styles.avatarPlaceholder}>
+              <Text style={styles.avatarText}>{user?.full_name?.charAt(0)?.toUpperCase() || 'U'}</Text>
+            </View>
+          )}
+          {isEditing && (
+            <View style={styles.cameraIconContainer}>
+              <Ionicons name="camera" size={14} color={colors.white} />
+            </View>
+          )}
+        </TouchableOpacity>
         <Text style={styles.name}>{user?.full_name}</Text>
         <View style={styles.badge}>
           <Text style={styles.badgeText}>{getDynamicRoleLabel(user)}</Text>
@@ -186,9 +251,19 @@ export default function ProfileScreen({ navigation }: any) {
         <View style={{ gap: Spacing.lg }}>
           <View style={styles.card}>
             <Info icon="mail-outline" label="Email" value={user?.email_address || ''} />
-            <Info icon="school-outline" label="Sekolah" value={user?.school?.school_name || '-'} />
-            <Info icon="card-outline" label="NISN" value={user?.student_id_number || '-'} />
-            <Info icon="people-outline" label="Kelas" value={user?.class_name || '-'} />
+            {user?.user_role !== 'super_admin' && (
+              <>
+                <Info icon="business-outline" label="Kabupaten" value={user?.regency?.regency_name || '-'} />
+                <Info icon="map-outline" label="Kecamatan" value={user?.district?.district_name || '-'} />
+                <Info icon="school-outline" label="Sekolah" value={user?.school?.school_name || '-'} />
+              </>
+            )}
+            {user?.user_role === 'student_member' && (
+              <>
+                <Info icon="card-outline" label="NISN" value={user?.student_id_number || '-'} />
+                <Info icon="people-outline" label="Kelas" value={user?.class_name || '-'} />
+              </>
+            )}
             {user?.phone_number && <Info icon="call-outline" label="Telepon" value={user?.phone_number} />}
           </View>
 
@@ -228,7 +303,7 @@ export default function ProfileScreen({ navigation }: any) {
               // EDIT PROFILE FORM
               <View style={{ gap: Spacing.md }}>
                 <View>
-                  <Text style={styles.fieldLabel}>Nama Lengkap</Text>
+                  <Text style={styles.fieldLabel}>Nama Lengkap *</Text>
                   <TextInput
                     style={styles.textInput}
                     value={fullName}
@@ -262,24 +337,66 @@ export default function ProfileScreen({ navigation }: any) {
                 </View>
 
                 {user?.user_role === 'student_member' && (
-                  <View>
-                    <Text style={styles.fieldLabel}>Kelas</Text>
-                    <TextInput
-                      style={styles.textInput}
-                      value={className}
-                      onChangeText={setClassName}
-                      placeholder="Contoh: XII IPA 1"
-                      placeholderTextColor={colors.textMuted}
-                      editable={!saving}
-                    />
-                  </View>
+                  <>
+                    <View>
+                      <Text style={styles.fieldLabel}>NISN (Terkunci)</Text>
+                      <TextInput
+                        style={[styles.textInput, styles.disabledInput]}
+                        value={user?.student_id_number || ''}
+                        editable={false}
+                      />
+                    </View>
+
+                    <View>
+                      <Text style={styles.fieldLabel}>Kelas *</Text>
+                      <TextInput
+                        style={styles.textInput}
+                        value={className}
+                        onChangeText={setClassName}
+                        placeholder="Contoh: XII IPA 1"
+                        placeholderTextColor={colors.textMuted}
+                        editable={!saving}
+                      />
+                    </View>
+                  </>
+                )}
+
+                {user?.user_role !== 'super_admin' && (
+                  <>
+                    <View>
+                      <Text style={styles.fieldLabel}>Kabupaten (Terkunci)</Text>
+                      <TextInput
+                        style={[styles.textInput, styles.disabledInput]}
+                        value={user?.regency?.regency_name || '-'}
+                        editable={false}
+                      />
+                    </View>
+
+                    <View>
+                      <Text style={styles.fieldLabel}>Kecamatan (Terkunci)</Text>
+                      <TextInput
+                        style={[styles.textInput, styles.disabledInput]}
+                        value={user?.district?.district_name || '-'}
+                        editable={false}
+                      />
+                    </View>
+
+                    <View>
+                      <Text style={styles.fieldLabel}>Sekolah / Unit (Terkunci)</Text>
+                      <TextInput
+                        style={[styles.textInput, styles.disabledInput]}
+                        value={user?.school?.school_name || '-'}
+                        editable={false}
+                      />
+                    </View>
+                  </>
                 )}
               </View>
             ) : (
               // EDIT PASSWORD FORM
               <View style={{ gap: Spacing.md }}>
                 <View>
-                  <Text style={styles.fieldLabel}>Kata Sandi Saat Ini</Text>
+                  <Text style={styles.fieldLabel}>Kata Sandi Saat Ini *</Text>
                   <TextInput
                     style={styles.textInput}
                     value={currentPassword}
@@ -292,7 +409,7 @@ export default function ProfileScreen({ navigation }: any) {
                 </View>
 
                 <View>
-                  <Text style={styles.fieldLabel}>Kata Sandi Baru</Text>
+                  <Text style={styles.fieldLabel}>Kata Sandi Baru *</Text>
                   <TextInput
                     style={styles.textInput}
                     value={newPassword}
@@ -305,7 +422,7 @@ export default function ProfileScreen({ navigation }: any) {
                 </View>
 
                 <View>
-                  <Text style={styles.fieldLabel}>Konfirmasi Kata Sandi Baru</Text>
+                  <Text style={styles.fieldLabel}>Konfirmasi Kata Sandi Baru *</Text>
                   <TextInput
                     style={styles.textInput}
                     value={confirmPassword}
@@ -363,8 +480,11 @@ const getStyles = (colors: any, isDark: boolean) =>
     container: { flex: 1, backgroundColor: colors.surface900 },
     content: { padding: Spacing.lg },
     avatarSection: { alignItems: 'center', paddingVertical: Spacing.md },
-    avatar: { width: 80, height: 80, borderRadius: 40, backgroundColor: colors.primary500, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.md },
+    avatarContainer: { width: 90, height: 90, borderRadius: 45, marginBottom: Spacing.md, position: 'relative', overflow: 'visible' },
+    avatarImage: { width: 90, height: 90, borderRadius: 45, resizeMode: 'cover' },
+    avatarPlaceholder: { width: 90, height: 90, borderRadius: 45, backgroundColor: colors.primary500, alignItems: 'center', justifyContent: 'center' },
     avatarText: { fontSize: FontSize.title, fontWeight: '800', color: colors.white },
+    cameraIconContainer: { position: 'absolute', bottom: 0, right: 0, backgroundColor: colors.primary500, width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: colors.surface900 },
     name: { fontSize: FontSize.xl, fontWeight: '800', color: colors.text },
     badge: { backgroundColor: colors.primary500 + '20', paddingHorizontal: Spacing.md, paddingVertical: 4, borderRadius: BorderRadius.full, marginTop: Spacing.sm },
     badgeText: { fontSize: FontSize.sm, fontWeight: '700', color: colors.primary400 },
@@ -377,20 +497,20 @@ const getStyles = (colors: any, isDark: boolean) =>
     editBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, backgroundColor: colors.primary500, borderRadius: BorderRadius.lg, padding: Spacing.lg, marginTop: Spacing.md },
     editBtnText: { fontSize: FontSize.md, fontWeight: '700', color: colors.white },
     
-    logoutBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, backgroundColor: colors.danger500 + '15', borderRadius: BorderRadius.lg, padding: Spacing.lg, borderWidth: 1, borderColor: colors.danger500 + '30' },
+    logoutBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, backgroundColor: colors.danger500 + '15', borderRadius: BorderRadius.lg, padding: Spacing.lg, borderWidth: 1, borderColor: colors.danger500 + '30', marginTop: Spacing.md },
     logoutText: { fontSize: FontSize.md, fontWeight: '700', color: colors.danger500 },
-
+ 
     // Edit view styles
     tabContainer: { flexDirection: 'row', backgroundColor: colors.surface800, borderRadius: BorderRadius.lg, padding: 4, borderWidth: 1, borderColor: colors.surface600 },
     tab: { flex: 1, paddingVertical: Spacing.md, alignItems: 'center', borderRadius: BorderRadius.md },
     activeTab: { backgroundColor: colors.surface900 },
     tabText: { fontSize: FontSize.sm, fontWeight: '700', color: colors.textMuted },
     activeTabText: { color: colors.text },
-
+ 
     fieldLabel: { fontSize: FontSize.xs, fontWeight: '700', color: colors.text, marginBottom: Spacing.xs, letterSpacing: 0.5 },
     textInput: { height: 48, backgroundColor: colors.surface900, borderRadius: BorderRadius.md, paddingHorizontal: Spacing.md, color: colors.text, borderWidth: 1, borderColor: colors.surface600, fontSize: FontSize.md },
     disabledInput: { opacity: 0.6, backgroundColor: colors.surface800 },
-
+ 
     formActions: { flexDirection: 'row', gap: Spacing.md },
     cancelBtn: { flex: 1, height: 48, borderRadius: BorderRadius.md, borderWidth: 1, borderColor: colors.surface600, alignItems: 'center', justifyContent: 'center' },
     cancelBtnText: { fontSize: FontSize.md, fontWeight: '700', color: colors.textMuted },

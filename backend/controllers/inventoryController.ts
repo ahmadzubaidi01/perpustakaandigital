@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { Op } from 'sequelize';
 import { BookQr, Book } from '../models';
-import { QrStatus } from '../config/constants';
+import { QrStatus, AuditActionType, TABLE_NAMES } from '../config/constants';
 import apiResponse from '../utils/apiResponse';
 import { asyncHandler } from '../middleware/errorHandler';
 import { buildRegionalFilter } from '../middleware/rbac';
@@ -12,6 +12,9 @@ import {
   runInventoryAudit,
   initializeStockFromZero,
 } from '../services/inventoryService';
+import { syncBookStock } from '../services/stockSyncService';
+import { deleteCachePattern } from '../config/redis';
+import { createAuditLog, buildAuditFromRequest } from '../services/auditService';
 
 /**
  * PATCH /api/v1/inventory/qr/:book_qr_id/status
@@ -124,10 +127,53 @@ const initializeStock = asyncHandler(async (req: Request, res: Response): Promis
   apiResponse.success(res, 'Stock initialization completed', result);
 });
 
+/**
+ * DELETE /api/v1/inventory/anomalies/:book_id
+ * Resolve/delete stock anomaly by reconciling total_stock with actual QR codes count.
+ */
+const deleteStockAnomaly = asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const bookId = parseInt(req.params.book_id as string, 10);
+  const book = await Book.findByPk(bookId);
+  if (!book) {
+    apiResponse.notFound(res, 'Book not found');
+    return;
+  }
+
+  // Enforce regional scope filter
+  const { isWithinScope } = require('../middleware/rbac');
+  if (!isWithinScope(req.user, book.school_id)) {
+    apiResponse.forbidden(res, 'Anda tidak memiliki akses ke data sekolah ini');
+    return;
+  }
+
+  // Count total physical QR records for this book in MySQL
+  const totalQrCount = await BookQr.count({ where: { book_id: bookId } });
+
+  // Update total stock
+  const previousTotalStock = book.total_stock;
+  await book.update({ total_stock: totalQrCount });
+
+  // Recalculate and sync available/borrowed/total stocks
+  await syncBookStock(bookId);
+
+  // Clear Redis caches
+  await deleteCachePattern('books:*');
+
+  // Audit log
+  await createAuditLog(buildAuditFromRequest(req, AuditActionType.UPDATE, TABLE_NAMES.BOOKS, bookId, null, {
+    action: 'reconcile_stock_anomaly',
+    previous_total_stock: previousTotalStock,
+    new_total_stock: totalQrCount
+  }));
+
+  apiResponse.success(res, 'Stock anomaly resolved successfully');
+});
+
 export {
   updateBookQrStatus,
   bulkUpdateQrStatus,
   listStockAnomalies,
+  deleteStockAnomaly,
   getQrTrace,
   runAudit,
   initializeStock,

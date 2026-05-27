@@ -70,18 +70,11 @@ export const PublicLayout: React.FC<PublicLayoutProps> = ({ children }) => {
                 </Button>
               </Link>
             ) : (
-              <>
-                <Link href="/login">
-                  <Button variant="ghost" size="sm">
-                    Masuk
-                  </Button>
-                </Link>
-                <Link href="/register">
-                  <Button variant="primary" size="sm">
-                    Daftar
-                  </Button>
-                </Link>
-              </>
+              <Link href="/login">
+                <Button variant="primary" size="sm">
+                  Masuk
+                </Button>
+              </Link>
             )}
           </div>
 
@@ -131,18 +124,11 @@ export const PublicLayout: React.FC<PublicLayoutProps> = ({ children }) => {
                     </Button>
                   </Link>
                 ) : (
-                  <>
-                    <Link href="/login" onClick={() => setMobileMenuOpen(false)} className="w-full">
-                      <Button variant="outline" className="w-full">
-                        Masuk
-                      </Button>
-                    </Link>
-                    <Link href="/register" onClick={() => setMobileMenuOpen(false)} className="w-full">
-                      <Button variant="primary" className="w-full">
-                        Daftar
-                      </Button>
-                    </Link>
-                  </>
+                  <Link href="/login" onClick={() => setMobileMenuOpen(false)} className="w-full">
+                    <Button variant="primary" className="w-full">
+                      Masuk
+                    </Button>
+                  </Link>
                 )}
               </div>
             </div>

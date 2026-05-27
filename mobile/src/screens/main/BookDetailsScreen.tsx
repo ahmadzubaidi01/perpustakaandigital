@@ -5,10 +5,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { CachedImage } from '../../components/CachedImage';
 import api, { booksAPI, reviewsAPI, qrAPI } from '../../services/api';
 import { resolveImageUrl } from '../../utils/imageUtils';
-import { getCachedBooks } from '../../services/db';
+import { getCachedBooks, getLocalBookQrsByBookId } from '../../services/db';
 import { checkOnlineStatus } from '../../services/syncService';
 import { useAuthStore } from '../../store/authStore';
 import { useTheme } from '../../context/ThemeContext';
+import qrcode from 'qrcode-generator';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 
 export default function BookDetailsScreen({ route, navigation }: any) {
@@ -46,7 +47,17 @@ export default function BookDetailsScreen({ route, navigation }: any) {
       if (!online) {
         const cached = getCachedBooks().find((b) => b.book_id === bookId);
         if (cached) {
-          setBook(cached);
+          const qrs = getLocalBookQrsByBookId(bookId);
+          setBook({
+            ...cached,
+            qr_codes: qrs.map(q => ({
+              book_qr_id: q.book_qr_id,
+              qr_uuid: q.qr_uuid,
+              qr_serial_number: q.qr_serial_number,
+              qr_status: q.qr_status,
+              sync_status: q.sync_status
+            }))
+          });
         } else {
           Alert.alert('Mode Offline', 'Detail buku ini tidak ditemukan di penyimpanan lokal.');
         }
@@ -228,10 +239,23 @@ export default function BookDetailsScreen({ route, navigation }: any) {
     uuid: activeQr.qr_uuid,
     serial: activeQr.qr_serial_number,
     book_id: book.book_id,
+    school_id: book.school_id,
     type: 'book_qr',
     version: 1,
   }) : '';
-  const qrImageUrl = activeQr ? `https://api.qrserver.com/v1/create-qr-code/?size=350x350&color=0b1120&bgcolor=ffffff&data=${encodeURIComponent(qrPayload)}` : '';
+  
+  let qrImageUrl = '';
+  if (activeQr) {
+    try {
+      const qr = qrcode(0, 'H');
+      qr.addData(qrPayload);
+      qr.make();
+      qrImageUrl = qr.createDataURL(8);
+    } catch (e) {
+      console.warn('Failed to generate offline QR preview:', e);
+      qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=350x350&color=0b1120&bgcolor=ffffff&data=${encodeURIComponent(qrPayload)}`;
+    }
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -331,17 +355,19 @@ export default function BookDetailsScreen({ route, navigation }: any) {
         </View>
 
         {/* Physical Copies and QRs (Admin Only) */}
-        {isAdmin && !isOffline && (
+        {isAdmin && (
           <View style={styles.section}>
             <View style={styles.reviewsHeaderRow}>
               <Text style={styles.sectionTitle}>Salinan Fisik (QR Code)</Text>
-              <TouchableOpacity
-                style={styles.writeReviewBtn}
-                onPress={() => navigation.navigate('QrGenerator', { preselectedBook: book })}
-              >
-                <Ionicons name="add" size={14} color={colors.accent500} />
-                <Text style={styles.writeReviewBtnText}>Tambah Salinan</Text>
-              </TouchableOpacity>
+              {!isOffline && (
+                <TouchableOpacity
+                  style={styles.writeReviewBtn}
+                  onPress={() => navigation.navigate('QrGenerator', { preselectedBook: book })}
+                >
+                  <Ionicons name="add" size={14} color={colors.accent500} />
+                  <Text style={styles.writeReviewBtnText}>Tambah Salinan</Text>
+                </TouchableOpacity>
+              )}
             </View>
 
             <View style={styles.qrListCard}>
@@ -367,16 +393,18 @@ export default function BookDetailsScreen({ route, navigation }: any) {
 
                       {/* Change Status Dropdown */}
                       <TouchableOpacity
-                        style={styles.qrActionIconBtn}
-                        onPress={() => handleOpenStatusModal(qr)}
+                        style={[styles.qrActionIconBtn, isOffline && { opacity: 0.3 }]}
+                        onPress={() => !isOffline && handleOpenStatusModal(qr)}
+                        disabled={isOffline}
                       >
                         <Ionicons name="options-outline" size={18} color={colors.accent500} />
                       </TouchableOpacity>
 
                       {/* Delete QR */}
                       <TouchableOpacity
-                        style={styles.qrActionIconBtn}
-                        onPress={() => handleDeleteQr(qr.book_qr_id)}
+                        style={[styles.qrActionIconBtn, isOffline && { opacity: 0.3 }]}
+                        onPress={() => !isOffline && handleDeleteQr(qr.book_qr_id)}
+                        disabled={isOffline}
                       >
                         <Ionicons name="trash-outline" size={18} color={colors.danger500} />
                       </TouchableOpacity>

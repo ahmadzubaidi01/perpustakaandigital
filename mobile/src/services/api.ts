@@ -304,6 +304,7 @@ export const inventoryAPI = {
     api.patch(`/v1/inventory/qr/${bookQrId}/status`, { qr_status, notes }),
   bulkUpdateStatus: (qr_ids: number[], qr_status: string, notes?: string) =>
     api.patch('/v1/inventory/qr/bulk-status', { qr_ids, qr_status, notes }),
+  deleteAnomaly: (book_id: number) => api.delete(`/v1/inventory/anomalies/${book_id}`),
 };
 
 // Users API

@@ -27,13 +27,7 @@ export default function HomePage() {
                 href="/login"
                 className="w-full sm:w-56 text-center font-bold bg-primary hover:bg-primary/95 text-primary-foreground py-3.5 px-6 rounded-xl shadow-lg shadow-primary/10 transition-all text-sm tracking-wider active:scale-[0.98]"
               >
-                LOGIN SISWA / ANGGOTA
-              </Link>
-              <Link
-                href="/register"
-                className="w-full sm:w-56 text-center font-bold bg-secondary hover:bg-secondary/80 text-secondary-foreground py-3.5 px-6 rounded-xl shadow-md transition-all text-sm tracking-wider active:scale-[0.98]"
-              >
-                DAFTAR ANGGOTA BARU
+                MASUK KE PERPUSTAKAAN
               </Link>
             </div>
           </div>

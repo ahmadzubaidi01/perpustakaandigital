@@ -2,13 +2,14 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { Package, AlertTriangle, QrCode, Camera, X, CheckCircle, Loader2, Search, RefreshCw, Trash2, Eye, BarChart3 } from 'lucide-react';
-import { inventoryAPI, qrAPI } from '@/lib/api';
+import { inventoryAPI, qrAPI, regionsAPI } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import toast from 'react-hot-toast';
 
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { Badge } from '@/components/ui/Badge';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Tabs } from '@/components/ui/Tabs';
@@ -333,6 +334,17 @@ function AnomaliesTab() {
 
   useEffect(() => { fetchAnomalies(); }, [fetchAnomalies]);
 
+  const handleResolveAnomaly = async (bookId: number) => {
+    if (!confirm('Apakah Anda yakin ingin menyelesaikan anomali ini? Tindakan ini akan menyesuaikan jumlah total stok digital buku agar sama dengan jumlah QR code fisik yang terdaftar.')) return;
+    try {
+      await inventoryAPI.deleteAnomaly(bookId);
+      toast.success('Anomali persediaan berhasil diselesaikan!');
+      fetchAnomalies();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Gagal menyelesaikan anomali');
+    }
+  };
+
   const columns: DataTableColumn[] = [
     { key: 'book_title', label: 'Buku', render: (val) => <span className="font-semibold text-foreground">{val}</span> },
     { key: 'book_code', label: 'Kode', render: (val) => <span className="font-mono text-xs text-primary font-bold">{val}</span> },
@@ -343,6 +355,15 @@ function AnomaliesTab() {
     { key: 'anomaly_type', label: 'Tipe', render: (val) => (
       <Badge variant="danger">{val === 'qr_count_mismatch' ? 'QR ≠ Stok' : 'Inkonsistensi'}</Badge>
     )},
+    {
+      key: 'book_id',
+      label: 'Aksi',
+      render: (val) => (
+        <Button variant="danger" size="sm" onClick={() => handleResolveAnomaly(val)}>
+          Selesaikan
+        </Button>
+      )
+    }
   ];
 
   return (
@@ -361,13 +382,93 @@ function AnomaliesTab() {
 
 /* ═══════════ Audit Tab ═══════════ */
 function AuditTab() {
+  const { user: currentUser } = useAuthStore();
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<any>(null);
 
+  // Scoping data
+  const [regencies, setRegencies] = useState<any[]>([]);
+  const [districts, setDistricts] = useState<any[]>([]);
+  const [schools, setSchools] = useState<any[]>([]);
+
+  // Selected scope values
+  const [selectedRegencyId, setSelectedRegencyId] = useState<string>('');
+  const [selectedDistrictId, setSelectedDistrictId] = useState<string>('');
+  const [selectedSchoolId, setSelectedSchoolId] = useState<string>('');
+  const [schoolSearchQuery, setSchoolSearchQuery] = useState('');
+
+  const isHighAdmin = ['super_admin', 'regency_admin', 'district_admin'].includes(currentUser?.user_role || '');
+
+  // Prepopulate locked regional values from currentUser
+  useEffect(() => {
+    if (!currentUser) return;
+    if (currentUser.regency_id) {
+      setSelectedRegencyId(currentUser.regency_id.toString());
+    }
+    if (currentUser.district_id) {
+      setSelectedDistrictId(currentUser.district_id.toString());
+    }
+    if (currentUser.school_id) {
+      setSelectedSchoolId(currentUser.school_id.toString());
+    }
+  }, [currentUser]);
+
+  // Fetch Regencies if super_admin
+  useEffect(() => {
+    if (currentUser?.user_role === 'super_admin') {
+      regionsAPI.listRegencies()
+        .then((res) => setRegencies(res.data.data || []))
+        .catch(() => toast.error('Gagal memuat data kabupaten'));
+    }
+  }, [currentUser]);
+
+  // Fetch Districts when Regency changes
+  useEffect(() => {
+    const regencyId = currentUser?.user_role === 'super_admin' ? selectedRegencyId : currentUser?.regency_id;
+    if (!regencyId) {
+      setDistricts([]);
+      setSchools([]);
+      return;
+    }
+    regionsAPI.listDistricts({ regency_id: regencyId })
+      .then((res) => {
+        setDistricts(res.data.data || []);
+        if (currentUser?.user_role === 'super_admin') {
+          setSelectedDistrictId('');
+          setSelectedSchoolId('');
+        }
+      })
+      .catch(() => toast.error('Gagal memuat data kecamatan'));
+  }, [selectedRegencyId, currentUser]);
+
+  // Fetch Schools when District changes
+  useEffect(() => {
+    const districtId = ['super_admin', 'regency_admin'].includes(currentUser?.user_role || '')
+      ? selectedDistrictId
+      : currentUser?.district_id;
+    if (!districtId) {
+      setSchools([]);
+      return;
+    }
+    regionsAPI.listSchools({ district_id: districtId })
+      .then((res) => {
+        setSchools(res.data.data || []);
+        if (['super_admin', 'regency_admin'].includes(currentUser?.user_role || '')) {
+          setSelectedSchoolId('');
+        }
+      })
+      .catch(() => toast.error('Gagal memuat data sekolah'));
+  }, [selectedDistrictId, currentUser]);
+
   const handleRunAudit = async () => {
+    const finalSchoolId = isHighAdmin ? Number(selectedSchoolId) : undefined;
+    if (isHighAdmin && !finalSchoolId) {
+      toast.error('Silakan pilih sekolah terlebih dahulu sebelum menjalankan audit.');
+      return;
+    }
     setRunning(true);
     try {
-      const res = await inventoryAPI.runAudit();
+      const res = await inventoryAPI.runAudit(finalSchoolId);
       setResult(res.data.data);
       toast.success('Audit inventaris selesai!');
     } catch (err: any) {
@@ -378,10 +479,15 @@ function AuditTab() {
   };
 
   const handleInitialize = async () => {
+    const finalSchoolId = isHighAdmin ? Number(selectedSchoolId) : undefined;
+    if (isHighAdmin && !finalSchoolId) {
+      toast.error('Silakan pilih sekolah terlebih dahulu sebelum melakukan inisialisasi.');
+      return;
+    }
     if (!confirm('Inisialisasi stok dari nol akan menyinkronkan ulang seluruh stok buku. Lanjutkan?')) return;
     setRunning(true);
     try {
-      const res = await inventoryAPI.initializeStock();
+      const res = await inventoryAPI.initializeStock(finalSchoolId);
       setResult(res.data.data);
       toast.success('Inisialisasi stok selesai!');
     } catch (err: any) {
@@ -391,50 +497,120 @@ function AuditTab() {
     }
   };
 
+  // Filter schools list dynamically for searchability
+  const filteredSchools = schools.filter(s =>
+    s.school_name.toLowerCase().includes(schoolSearchQuery.toLowerCase())
+  );
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <Card hoverable={false} className="p-6 text-center">
-        <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center bg-primary/10 text-primary">
-          <BarChart3 size={32} />
-        </div>
-        <h3 className="text-base font-bold text-foreground mb-2">Audit Inventaris</h3>
-        <p className="text-xs text-muted-foreground mb-6">Sinkronkan seluruh stok buku dengan data QR code yang terdaftar.</p>
-        <Button variant="primary" size="md" onClick={handleRunAudit} disabled={running}
-          leftIcon={running ? <Loader2 size={16} className="animate-spin" /> : <BarChart3 size={16} />}>
-          {running ? 'Memproses...' : 'Jalankan Audit'}
-        </Button>
-      </Card>
+    <div className="space-y-6">
+      {/* Searchable school filter panel for regional admins */}
+      {isHighAdmin && (
+        <Card hoverable={false} className="p-6 space-y-4">
+          <h3 className="text-base font-bold text-foreground">Filter Wilayah & Sekolah Kontrol</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {currentUser?.user_role === 'super_admin' && (
+              <Select
+                label="Kabupaten"
+                value={selectedRegencyId}
+                onChange={(e) => setSelectedRegencyId(e.target.value)}
+                options={[
+                  { value: '', label: 'Pilih Kabupaten' },
+                  ...regencies.map(r => ({ value: String(r.regency_id), label: r.regency_name }))
+                ]}
+              />
+            )}
+            
+            {['super_admin', 'regency_admin'].includes(currentUser?.user_role || '') && (
+              <Select
+                label="Kecamatan"
+                value={selectedDistrictId}
+                onChange={(e) => setSelectedDistrictId(e.target.value)}
+                disabled={!selectedRegencyId && currentUser?.user_role === 'super_admin'}
+                options={[
+                  { value: '', label: 'Pilih Kecamatan' },
+                  ...districts.map(d => ({ value: String(d.district_id), label: d.district_name }))
+                ]}
+              />
+            )}
 
-      <Card hoverable={false} className="p-6 text-center">
-        <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center bg-amber-100 dark:bg-amber-950/30 text-amber-600">
-          <RefreshCw size={32} />
-        </div>
-        <h3 className="text-base font-bold text-foreground mb-2">Inisialisasi dari Nol</h3>
-        <p className="text-xs text-muted-foreground mb-6">Reset dan hitung ulang stok berdasarkan data QR code aktif dan peminjaman.</p>
-        <Button variant="outline" size="md" onClick={handleInitialize} disabled={running}
-          leftIcon={running ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}>
-          {running ? 'Memproses...' : 'Inisialisasi Stok'}
-        </Button>
-      </Card>
-
-      {result && (
-        <Card hoverable={false} className="p-6 md:col-span-2 animate-fade-in">
-          <div className="flex items-center gap-3 mb-4">
-            <CheckCircle size={24} className="text-emerald-500" />
-            <h3 className="text-base font-bold text-foreground">Hasil Audit</h3>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="p-4 rounded-xl bg-muted/40 border border-border">
-              <span className="text-[10px] uppercase font-bold text-muted-foreground block">Buku Disinkronkan</span>
-              <span className="text-2xl font-bold text-primary mt-1 block">{result.synced_books || result.initialized_books || 0}</span>
-            </div>
-            <div className="p-4 rounded-xl bg-muted/40 border border-border">
-              <span className="text-[10px] uppercase font-bold text-muted-foreground block">Anomali Ditemukan</span>
-              <span className="text-2xl font-bold text-foreground mt-1 block">{result.anomalies?.length || 0}</span>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-bold text-[var(--text-muted)]">Cari & Pilih Sekolah</label>
+              <Input
+                placeholder="Ketik nama sekolah..."
+                value={schoolSearchQuery}
+                onChange={(e) => setSchoolSearchQuery(e.target.value)}
+                disabled={!selectedDistrictId && ['super_admin', 'regency_admin'].includes(currentUser?.user_role || '')}
+                className="mb-1"
+              />
+              <Select
+                value={selectedSchoolId}
+                onChange={(e) => setSelectedSchoolId(e.target.value)}
+                disabled={!selectedDistrictId && ['super_admin', 'regency_admin'].includes(currentUser?.user_role || '')}
+                options={[
+                  { value: '', label: 'Pilih Sekolah dari Hasil Pencarian' },
+                  ...filteredSchools.map(s => ({ value: String(s.school_id), label: s.school_name }))
+                ]}
+              />
             </div>
           </div>
         </Card>
       )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card hoverable={false} className="p-6 text-center">
+          <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center bg-primary/10 text-primary">
+            <BarChart3 size={32} />
+          </div>
+          <h3 className="text-base font-bold text-foreground mb-2">Audit Inventaris</h3>
+          <p className="text-xs text-muted-foreground mb-6">Sinkronkan seluruh stok buku dengan data QR code yang terdaftar.</p>
+          <Button
+            variant="primary"
+            size="md"
+            onClick={handleRunAudit}
+            disabled={running || (isHighAdmin && !selectedSchoolId)}
+            leftIcon={running ? <Loader2 size={16} className="animate-spin" /> : <BarChart3 size={16} />}
+          >
+            {running ? 'Memproses...' : 'Jalankan Audit'}
+          </Button>
+        </Card>
+
+        <Card hoverable={false} className="p-6 text-center">
+          <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center bg-amber-100 dark:bg-amber-950/30 text-amber-600">
+            <RefreshCw size={32} />
+          </div>
+          <h3 className="text-base font-bold text-foreground mb-2">Inisialisasi dari Nol</h3>
+          <p className="text-xs text-muted-foreground mb-6">Reset dan hitung ulang stok berdasarkan data QR code aktif dan peminjaman.</p>
+          <Button
+            variant="outline"
+            size="md"
+            onClick={handleInitialize}
+            disabled={running || (isHighAdmin && !selectedSchoolId)}
+            leftIcon={running ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+          >
+            {running ? 'Memproses...' : 'Inisialisasi Stok'}
+          </Button>
+        </Card>
+
+        {result && (
+          <Card hoverable={false} className="p-6 md:col-span-2 animate-fade-in">
+            <div className="flex items-center gap-3 mb-4">
+              <CheckCircle size={24} className="text-emerald-500" />
+              <h3 className="text-base font-bold text-foreground">Hasil Audit</h3>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-4 rounded-xl bg-muted/40 border border-border">
+                <span className="text-[10px] uppercase font-bold text-muted-foreground block">Buku Disinkronkan</span>
+                <span className="text-2xl font-bold text-primary mt-1 block">{result.synced_books || result.initialized_books || 0}</span>
+              </div>
+              <div className="p-4 rounded-xl bg-muted/40 border border-border">
+                <span className="text-[10px] uppercase font-bold text-muted-foreground block">Anomali Ditemukan</span>
+                <span className="text-2xl font-bold text-foreground mt-1 block">{result.anomalies?.length || 0}</span>
+              </div>
+            </div>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }

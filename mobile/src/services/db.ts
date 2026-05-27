@@ -121,6 +121,14 @@ export const initDatabase = (): void => {
     addColumnIfNeeded('books', 'cover_image_url', 'TEXT');
     addColumnIfNeeded('books', 'updated_at', 'TEXT');
     addColumnIfNeeded('books', 'deleted_at', 'TEXT');
+    addColumnIfNeeded('books', 'publisher_name', 'TEXT');
+    addColumnIfNeeded('books', 'publication_year', 'INTEGER');
+    addColumnIfNeeded('books', 'rack_location', 'TEXT');
+    addColumnIfNeeded('books', 'category_id', 'INTEGER');
+    addColumnIfNeeded('books', 'isbn_code', 'TEXT');
+    addColumnIfNeeded('books', 'book_description', 'TEXT');
+    addColumnIfNeeded('books', 'school_id', 'INTEGER');
+    addColumnIfNeeded('books', 'sync_status', "TEXT DEFAULT 'synced'");
     addColumnIfNeeded('students', 'member_qr_uuid', 'TEXT');
     addColumnIfNeeded('students', 'updated_at', 'TEXT');
     addColumnIfNeeded('students', 'deleted_at', 'TEXT');
@@ -140,6 +148,14 @@ export const initDatabase = (): void => {
         available_stock INTEGER,
         total_stock INTEGER,
         cover_image_url TEXT,
+        publisher_name TEXT,
+        publication_year INTEGER,
+        rack_location TEXT,
+        category_id INTEGER,
+        isbn_code TEXT,
+        book_description TEXT,
+        school_id INTEGER,
+        sync_status TEXT DEFAULT 'synced',
         created_at TEXT,
         updated_at TEXT,
         deleted_at TEXT
@@ -223,6 +239,21 @@ export const initDatabase = (): void => {
     `);
     db.execSync('CREATE INDEX IF NOT EXISTS idx_scans_status ON offline_scans(sync_status);');
 
+    // 6. Create local book QR codes table
+    db.execSync(`
+      CREATE TABLE IF NOT EXISTS book_qrs (
+        book_qr_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        book_id INTEGER,
+        qr_uuid TEXT UNIQUE,
+        qr_serial_number TEXT UNIQUE,
+        qr_image_url TEXT,
+        qr_status TEXT DEFAULT 'active',
+        sync_status TEXT DEFAULT 'pending'
+      );
+    `);
+    db.execSync('CREATE INDEX IF NOT EXISTS idx_book_qrs_book ON book_qrs(book_id);');
+    db.execSync('CREATE INDEX IF NOT EXISTS idx_book_qrs_serial ON book_qrs(qr_serial_number);');
+
     (global as any).sqliteDb = db;
     console.log('[SQLite] All caching tables initialized successfully');
   } catch (error) {
@@ -257,8 +288,10 @@ export const cacheBooks = (books: CachedBook[]): void => {
       db.runSync(
         `INSERT OR REPLACE INTO books (
           book_id, book_code, book_title, author_name, book_status, 
-          available_stock, total_stock, cover_image_url, created_at, updated_at, deleted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
+          available_stock, total_stock, cover_image_url, publisher_name,
+          publication_year, rack_location, category_id, isbn_code,
+          book_description, school_id, sync_status, created_at, updated_at, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, NULL);`,
         book.book_id,
         book.book_code || '',
         book.book_title,
@@ -267,6 +300,13 @@ export const cacheBooks = (books: CachedBook[]): void => {
         book.available_stock || 0,
         book.total_stock || 0,
         book.cover_image_url || null,
+        (book as any).publisher_name || '',
+        (book as any).publication_year || null,
+        (book as any).rack_location || '',
+        (book as any).category_id || null,
+        (book as any).isbn_code || '',
+        (book as any).book_description || '',
+        (book as any).school_id || null,
         book.created_at || new Date().toISOString(),
         book.updated_at || new Date().toISOString()
       );
@@ -545,5 +585,149 @@ export const clearFailedScans = (): void => {
     console.log('[SQLite] Cleared all failed scans from queue');
   } catch (error) {
     handleDatabaseError(error, 'clearFailedScans');
+  }
+};
+
+export const getCachedBookById = (bookId: number): any => {
+  if (!ensureDatabase()) return null;
+  try {
+    return db.getFirstSync('SELECT * FROM books WHERE book_id = ?;', bookId);
+  } catch (error) {
+    handleDatabaseError(error, 'getCachedBookById');
+    return null;
+  }
+};
+
+export const getCachedStudentById = (studentId: number): any => {
+  if (!ensureDatabase()) return null;
+  try {
+    return db.getFirstSync('SELECT * FROM students WHERE user_id = ?;', studentId);
+  } catch (error) {
+    handleDatabaseError(error, 'getCachedStudentById');
+    return null;
+  }
+};
+
+export const insertOfflineBook = (book: any): void => {
+  if (!ensureDatabase()) return;
+  try {
+    db.runSync(
+      `INSERT INTO books (
+        book_id, book_code, book_title, author_name, book_status,
+        available_stock, total_stock, cover_image_url, publisher_name,
+        publication_year, rack_location, category_id, isbn_code,
+        book_description, school_id, sync_status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?);`,
+      book.book_id,
+      book.book_code || '',
+      book.book_title,
+      book.author_name,
+      book.book_status || 'available',
+      book.available_stock || 0,
+      book.total_stock || 0,
+      book.cover_image_url || null,
+      book.publisher_name || '',
+      book.publication_year || null,
+      book.rack_location || '',
+      book.category_id || null,
+      book.isbn_code || '',
+      book.book_description || '',
+      book.school_id || null,
+      book.created_at || new Date().toISOString(),
+      book.updated_at || new Date().toISOString()
+    );
+    console.log('[SQLite] Offline book inserted successfully, ID:', book.book_id);
+  } catch (error) {
+    handleDatabaseError(error, 'insertOfflineBook');
+    throw error;
+  }
+};
+
+export const getPendingOfflineBooks = (): any[] => {
+  if (!ensureDatabase()) return [];
+  try {
+    return db.getAllSync("SELECT * FROM books WHERE sync_status = 'pending' ORDER BY book_id ASC;") as any[];
+  } catch (error) {
+    handleDatabaseError(error, 'getPendingOfflineBooks');
+    return [];
+  }
+};
+
+export const insertLocalBookQr = (qr: any): void => {
+  if (!ensureDatabase()) return;
+  try {
+    db.runSync(
+      `INSERT INTO book_qrs (book_id, qr_uuid, qr_serial_number, qr_image_url, qr_status, sync_status)
+       VALUES (?, ?, ?, ?, ?, 'pending');`,
+      qr.book_id,
+      qr.qr_uuid,
+      qr.qr_serial_number,
+      qr.qr_image_url || null,
+      qr.qr_status || 'active'
+    );
+    console.log('[SQLite] Local book QR inserted successfully serial:', qr.qr_serial_number);
+  } catch (error) {
+    handleDatabaseError(error, 'insertLocalBookQr');
+    throw error;
+  }
+};
+
+export const getPendingLocalBookQrs = (bookId?: number): any[] => {
+  if (!ensureDatabase()) return [];
+  try {
+    if (bookId !== undefined) {
+      return db.getAllSync("SELECT * FROM book_qrs WHERE book_id = ? AND sync_status = 'pending';", bookId) as any[];
+    }
+    return db.getAllSync("SELECT * FROM book_qrs WHERE sync_status = 'pending';") as any[];
+  } catch (error) {
+    handleDatabaseError(error, 'getPendingLocalBookQrs');
+    return [];
+  }
+};
+
+export const getLocalBookQrsByBookId = (bookId: number): any[] => {
+  if (!ensureDatabase()) return [];
+  try {
+    return db.getAllSync("SELECT * FROM book_qrs WHERE book_id = ?;", bookId) as any[];
+  } catch (error) {
+    handleDatabaseError(error, 'getLocalBookQrsByBookId');
+    return [];
+  }
+};
+
+export const updateOfflineBookId = (oldBookId: number, newBookId: number, newBookCode: string): void => {
+  if (!ensureDatabase()) return;
+  try {
+    // 1. Update book_id and book_code in books table
+    db.runSync('UPDATE books SET book_id = ?, book_code = ?, sync_status = \'synced\' WHERE book_id = ?;', newBookId, newBookCode, oldBookId);
+    
+    // 2. Update book_id in book_qrs table
+    db.runSync('UPDATE book_qrs SET book_id = ?, sync_status = \'synced\' WHERE book_id = ?;', newBookId, oldBookId);
+
+    // 3. Update book_id in borrowings table
+    db.runSync('UPDATE borrowings SET book_id = ? WHERE book_id = ?;', newBookId, oldBookId);
+
+    console.log(`[SQLite] Reconciled book ID: old=${oldBookId} -> new=${newBookId}`);
+  } catch (error) {
+    handleDatabaseError(error, 'updateOfflineBookId');
+    throw error;
+  }
+};
+
+export const markBookSynced = (bookId: number, bookCode: string): void => {
+  if (!ensureDatabase()) return;
+  try {
+    db.runSync("UPDATE books SET sync_status = 'synced', book_code = ? WHERE book_id = ?;", bookCode, bookId);
+  } catch (error) {
+    handleDatabaseError(error, 'markBookSynced');
+  }
+};
+
+export const markBookQrSynced = (bookQrId: number): void => {
+  if (!ensureDatabase()) return;
+  try {
+    db.runSync("UPDATE book_qrs SET sync_status = 'synced' WHERE book_qr_id = ?;", bookQrId);
+  } catch (error) {
+    handleDatabaseError(error, 'markBookQrSynced');
   }
 };

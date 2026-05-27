@@ -90,12 +90,11 @@ export default function LoginScreen({ navigation }: any) {
               {loading ? <ActivityIndicator color={colors.white} /> : <Text style={styles.buttonText}>Masuk</Text>}
             </TouchableOpacity>
 
-            {/* Register Link */}
-            <View style={styles.linkRow}>
-              <Text style={styles.linkText}>Belum punya akun? </Text>
-              <TouchableOpacity onPress={() => navigation.navigate('Register')}>
-                <Text style={styles.link}>Daftar</Text>
-              </TouchableOpacity>
+            {/* Admin contact notice */}
+            <View style={{ marginTop: Spacing.xl, paddingTop: Spacing.xl, borderTopWidth: 1, borderTopColor: colors.surface600, alignItems: 'center' }}>
+              <Text style={{ fontSize: FontSize.sm, color: colors.textMuted, textAlign: 'center', lineHeight: 18 }}>
+                Belum memiliki akun? Silakan hubungi admin perpustakaan sekolah Anda untuk didaftarkan.
+              </Text>
             </View>
           </View>
         </ScrollView>

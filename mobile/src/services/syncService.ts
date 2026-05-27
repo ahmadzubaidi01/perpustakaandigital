@@ -15,7 +15,12 @@ import {
   initDatabase,
   OfflineScan,
   incrementScanRetry,
-  getAllScans
+  getAllScans,
+  getPendingOfflineBooks,
+  getPendingLocalBookQrs,
+  updateOfflineBookId,
+  markBookSynced,
+  markBookQrSynced
 } from './db';
 import { useAuthStore } from '../store/authStore';
 import { useSyncDiagnosticsStore } from '../store/syncDiagnosticsStore';
@@ -421,6 +426,105 @@ export const syncMetadataAndCache = async (): Promise<void> => {
 };
 
 /**
+ * Synchronize offline-created books to the backend.
+ * Construct multipart FormData, register the books, register QR codes, and reconcile local references.
+ */
+export const syncOfflineCreatedBooks = async (): Promise<void> => {
+  try {
+    const isOnline = await checkOnlineStatus();
+    if (!isOnline) return;
+
+    const pendingBooks = getPendingOfflineBooks();
+    if (pendingBooks.length === 0) return;
+
+    console.log(`[SyncService] Found ${pendingBooks.length} pending offline-created books. Starting sync.`);
+
+    for (const book of pendingBooks) {
+      try {
+        const oldBookId = book.book_id;
+        console.log(`[SyncService] Syncing offline book oldBookId=${oldBookId}, title="${book.book_title}"`);
+
+        // 1. Construct multipart FormData for book metadata and cover image upload
+        const formData = new FormData();
+        formData.append('book_title', book.book_title);
+        formData.append('author_name', book.author_name);
+        formData.append('publisher_name', book.publisher_name || '');
+        if (book.publication_year) {
+          formData.append('publication_year', String(book.publication_year));
+        }
+        formData.append('rack_location', book.rack_location || '');
+        if (book.category_id) {
+          formData.append('category_id', String(book.category_id));
+        }
+        formData.append('isbn_code', book.isbn_code || '');
+        formData.append('total_stock', String(book.total_stock || 1));
+        formData.append('book_description', book.book_description || '');
+        formData.append('school_id', String(book.school_id));
+
+        if (book.cover_image_url && book.cover_image_url.startsWith('file://')) {
+          formData.append('cover_image', {
+            uri: book.cover_image_url,
+            name: `cover_offline_${Date.now()}.jpg`,
+            type: 'image/jpeg',
+          } as any);
+        }
+
+        // 2. Register book online
+        const res = await booksAPI.create(formData);
+        const serverBook = res.data.data;
+        const newBookId = serverBook.book_id;
+        const newBookCode = serverBook.book_code;
+
+        console.log(`[SyncService] Book registered online successfully: newBookId=${newBookId}, code=${newBookCode}`);
+
+        // 3. Register its physical QR copies on server database
+        const localQrs = getPendingLocalBookQrs(oldBookId);
+        console.log(`[SyncService] Found ${localQrs.length} offline QR copies to sync for this book`);
+
+        for (const qr of localQrs) {
+          try {
+            console.log(`[SyncService] Syncing QR serial="${qr.qr_serial_number}" for book id=${newBookId}`);
+            await qrAPI.generate({
+              book_id: newBookId,
+              quantity: 1,
+              custom_serial: qr.qr_serial_number,
+            });
+            
+            // Mark QR as synced in SQLite
+            markBookQrSynced(qr.book_qr_id);
+          } catch (qrErr: any) {
+            console.warn(`[SyncService] Failed to sync QR serial=${qr.qr_serial_number}:`, qrErr.message);
+            if (qrErr.response?.status === 400 || qrErr.response?.data?.message?.includes('sudah terdaftar')) {
+              markBookQrSynced(qr.book_qr_id);
+            }
+          }
+        }
+
+        // 4. Reconcile all local references (replace negative book_id with server-assigned book_id)
+        updateOfflineBookId(oldBookId, newBookId, newBookCode);
+        
+        // Update cover image url to server's remote path
+        if (serverBook.cover_image_url) {
+          const dbInstance = (global as any).sqliteDb;
+          if (dbInstance) {
+            dbInstance.runSync('UPDATE books SET cover_image_url = ? WHERE book_id = ?;', serverBook.cover_image_url, newBookId);
+          }
+        }
+
+        console.log(`[SyncService] Synchronization complete for book title="${book.book_title}"`);
+      } catch (err: any) {
+        console.error(`[SyncService] Failed to sync book "${book.book_title}":`, err.message);
+        if (!err.response || err.response.status >= 500) {
+          break; // Stop sequencing on server/network errors
+        }
+      }
+    }
+  } catch (syncError: any) {
+    console.error('[SyncService] error in syncOfflineCreatedBooks:', syncError.message);
+  }
+};
+
+/**
  * Start periodic background synchronization every 30 seconds.
  */
 export const startAutoSync = (onProgressUpdate?: () => void): (() => void) => {
@@ -431,6 +535,9 @@ export const startAutoSync = (onProgressUpdate?: () => void): (() => void) => {
       if (user?.user_role !== 'school_admin') {
         return;
       }
+
+      // Sync offline-created books first
+      await syncOfflineCreatedBooks();
 
       // Replay pending offline actions first to maintain strict event sequence order
       await syncOfflineScans(onProgressUpdate);

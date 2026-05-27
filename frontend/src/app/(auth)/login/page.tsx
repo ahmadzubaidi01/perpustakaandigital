@@ -132,24 +132,12 @@ export default function LoginPage() {
             Masuk
           </Button>
         </form>
-
-        {/* Divider */}
-        <div className="flex items-center gap-3 my-6">
-          <div className="flex-1 h-px bg-border" />
-          <span className="text-xs text-muted-foreground font-medium">atau</span>
-          <div className="flex-1 h-px bg-border" />
+        {/* Admin contact notice */}
+        <div className="pt-4 mt-6 border-t border-border text-center">
+          <p className="text-sm text-muted-foreground">
+            Belum memiliki akun? Silakan hubungi admin perpustakaan sekolah Anda untuk mendaftarkan akun baru.
+          </p>
         </div>
-
-        {/* Register link */}
-        <p className="text-center text-sm text-muted-foreground">
-          Belum punya akun?{' '}
-          <Link
-            href="/register"
-            className="font-bold text-primary hover:underline"
-          >
-            Daftar sekarang
-          </Link>
-        </p>
       </Card>
 
       {/* Footer */}

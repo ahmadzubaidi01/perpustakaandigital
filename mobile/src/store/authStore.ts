@@ -16,6 +16,8 @@ export interface User {
   school_id: number | null;
   regency_id?: number | null;
   district_id?: number | null;
+  regency?: { regency_id: number; regency_name: string } | null;
+  district?: { district_id: number; district_name: string } | null;
   school?: { school_id: number; school_name: string } | null;
 }
 

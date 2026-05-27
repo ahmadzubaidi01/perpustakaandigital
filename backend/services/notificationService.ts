@@ -1,6 +1,6 @@
 import nodemailer from 'nodemailer';
 import { Notification, Borrowing, BookQr, Book, User } from '../models';
-import { NotificationType, BorrowingStatus } from '../config/constants';
+import { NotificationType, BorrowingStatus, UserRole } from '../config/constants';
 import { Op } from 'sequelize';
 import env from '../config/environment';
 import logger from '../utils/logger';
@@ -210,6 +210,38 @@ const sendAvailabilityNotice = async (
 };
 
 /**
+ * Get all admin users who should be notified for a given school's event.
+ * Includes School Admins of the school, District Admins of the school's district,
+ * Regency Admins of the school's regency, and Super Admins.
+ */
+const getAdminsForSchool = async (schoolId: number): Promise<User[]> => {
+  try {
+    const { School } = require('../models');
+    const school = await School.findByPk(schoolId);
+    if (!school) return [];
+
+    const regencyId = school.regency_id;
+    const districtId = school.district_id;
+
+    const admins = await User.findAll({
+      where: {
+        account_status: 'active',
+        [Op.or]: [
+          { user_role: UserRole.SUPER_ADMIN },
+          { user_role: UserRole.REGENCY_ADMIN, regency_id: regencyId },
+          { user_role: UserRole.DISTRICT_ADMIN, district_id: districtId },
+          { user_role: UserRole.SCHOOL_ADMIN, school_id: schoolId }
+        ]
+      }
+    });
+    return admins;
+  } catch (err) {
+    logger.error('Failed to get admins for school', err);
+    return [];
+  }
+};
+
+/**
  * Send borrowing event notification (borrow approved, etc.).
  */
 const sendBorrowingEvent = async (
@@ -224,12 +256,41 @@ const sendBorrowingEvent = async (
     extended: `Peminjaman buku "${bookTitle}" telah diperpanjang.`,
   };
 
+  // 1. Notify the student (borrower)
   await createInAppNotification({
     user_id: userId,
     notification_title: 'Peminjaman Buku',
     notification_message: messages[eventType] || `Update peminjaman: ${bookTitle}`,
     notification_type: NotificationType.BORROWING_EVENT,
   });
+
+  // 2. Notify all administrative accounts in scope
+  try {
+    const student = await User.findByPk(userId);
+    if (student && student.school_id) {
+      const admins = await getAdminsForSchool(student.school_id);
+      
+      const adminMessages: Record<string, string> = {
+        approved: `Peminjaman buku "${bookTitle}" oleh ${student.full_name} telah disetujui.`,
+        created: `Permintaan peminjaman baru untuk buku "${bookTitle}" oleh ${student.full_name} perlu disetujui.`,
+        quick_borrow: `Peminjaman langsung buku "${bookTitle}" oleh ${student.full_name} berhasil dicatat.`,
+        extended: `Perpanjangan peminjaman buku "${bookTitle}" oleh ${student.full_name} berhasil dicatat.`,
+      };
+
+      for (const admin of admins) {
+        if (admin.user_id !== userId) {
+          await createInAppNotification({
+            user_id: admin.user_id,
+            notification_title: 'Pemberitahuan Peminjaman (Admin)',
+            notification_message: adminMessages[eventType] || `Peminjaman oleh ${student.full_name}: ${bookTitle}`,
+            notification_type: NotificationType.BORROWING_EVENT,
+          });
+        }
+      }
+    }
+  } catch (err: any) {
+    logger.error('Failed to notify admins of borrowing event:', err.message);
+  }
 };
 
 /**
@@ -244,12 +305,33 @@ const sendReturnEvent = async (
     ? ` Denda keterlambatan: Rp ${penaltyAmount.toLocaleString()}.`
     : '';
 
+  // 1. Notify student
   await createInAppNotification({
     user_id: userId,
     notification_title: 'Pengembalian Buku',
     notification_message: `Buku "${bookTitle}" berhasil dikembalikan.${penaltyInfo}`,
     notification_type: NotificationType.RETURN_EVENT,
   });
+
+  // 2. Notify all administrative accounts in scope
+  try {
+    const student = await User.findByPk(userId);
+    if (student && student.school_id) {
+      const admins = await getAdminsForSchool(student.school_id);
+      for (const admin of admins) {
+        if (admin.user_id !== userId) {
+          await createInAppNotification({
+            user_id: admin.user_id,
+            notification_title: 'Pemberitahuan Pengembalian (Admin)',
+            notification_message: `Buku "${bookTitle}" oleh ${student.full_name} berhasil dikembalikan.${penaltyInfo}`,
+            notification_type: NotificationType.RETURN_EVENT,
+          });
+        }
+      }
+    }
+  } catch (err: any) {
+    logger.error('Failed to notify admins of return event:', err.message);
+  }
 };
 
 /**

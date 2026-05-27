@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
-import { qrAPI, borrowingsAPI, inventoryAPI } from '../../services/api';
+import { qrAPI, borrowingsAPI, inventoryAPI, regionsAPI } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { useTheme } from '../../context/ThemeContext';
-import { queueOfflineScan, getAllScans, clearSyncedScans, OfflineScan } from '../../services/db';
+import { queueOfflineScan, getAllScans, clearSyncedScans, OfflineScan, getCachedBookById, getCachedStudentById, getCachedStudents } from '../../services/db';
 import { checkOnlineStatus, syncOfflineScans } from '../../services/syncService';
 import { useNetwork } from '../../context/NetworkContext';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
@@ -51,17 +51,65 @@ export default function ScanScreen({ navigation }: any) {
   const [showAuditPanel, setShowAuditPanel] = useState(false);
   const [isKeyboardVisible, setKeyboardVisible] = useState(false);
 
+  // Regional School Auditing search states
+  const isHighAdmin = ['super_admin', 'regency_admin', 'district_admin'].includes(user?.user_role || '');
+  const [selectedSchool, setSelectedSchool] = useState<any>(null);
+  const [schoolSearchQuery, setSchoolSearchQuery] = useState('');
+  const [schoolSearchResults, setSchoolSearchResults] = useState<any[]>([]);
+  const [schoolLoading, setSchoolLoading] = useState(false);
+
+  const searchSchools = async (query: string) => {
+    if (!query || query.trim().length < 2) {
+      setSchoolSearchResults([]);
+      return;
+    }
+    setSchoolLoading(true);
+    try {
+      const res = await regionsAPI.listSchools({ q: query, limit: 20 });
+      setSchoolSearchResults(res.data.data || []);
+    } catch (err) {
+      console.warn('Gagal mencari sekolah:', err);
+    } finally {
+      setSchoolLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (schoolSearchQuery.trim().length >= 2) {
+        searchSchools(schoolSearchQuery);
+      } else {
+        setSchoolSearchResults([]);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [schoolSearchQuery]);
+
   const searchStudents = async (query: string) => {
     if (!query || query.trim().length < 2) {
       setStudentSearchResults([]);
       return;
     }
     setSearchLoading(true);
+    
+    const online = await checkOnlineStatus();
+    if (online) {
+      try {
+        const res = await borrowingsAPI.searchStudent(query);
+        setStudentSearchResults(res.data.data || []);
+        setSearchLoading(false);
+        return;
+      } catch (err: any) {
+        console.warn('Gagal mencari siswa online, mencoba pencarian lokal:', err);
+      }
+    }
+
     try {
-      const res = await borrowingsAPI.searchStudent(query);
-      setStudentSearchResults(res.data.data || []);
+      const localResults = getCachedStudents(query);
+      setStudentSearchResults(localResults || []);
     } catch (err: any) {
-      console.warn('Gagal mencari siswa:', err);
+      console.warn('Gagal mencari siswa dari cache lokal:', err);
+      setStudentSearchResults([]);
     } finally {
       setSearchLoading(false);
     }
@@ -257,6 +305,11 @@ export default function ScanScreen({ navigation }: any) {
   };
 
   const handleRunAudit = async () => {
+    const targetSchoolId = isHighAdmin ? selectedSchool?.school_id : (user?.school_id ?? undefined);
+    if (isHighAdmin && !targetSchoolId) {
+      Alert.alert('Pilih Sekolah', 'Silakan cari dan pilih sekolah tujuan terlebih dahulu!');
+      return;
+    }
     Alert.alert(
       'Konfirmasi Audit',
       'Audit stok akan mencocokkan data seluruh status fisik QR code buku dengan jumlah inventaris digital di perpustakaan sekolah Anda. Lanjutkan?',
@@ -267,7 +320,7 @@ export default function ScanScreen({ navigation }: any) {
           onPress: async () => {
             setLoading(true);
             try {
-              const res = await inventoryAPI.runAudit(user?.school_id ?? undefined);
+              const res = await inventoryAPI.runAudit(targetSchoolId);
               Alert.alert(
                 'Audit Selesai',
                 `Audit berhasil diselesaikan.\n\nBuku disinkronkan: ${res.data.data.synced_books}\nAnomali terdeteksi: ${res.data.data.anomalies?.length || 0}`
@@ -285,6 +338,11 @@ export default function ScanScreen({ navigation }: any) {
   };
 
   const handleInitializeStock = async () => {
+    const targetSchoolId = isHighAdmin ? selectedSchool?.school_id : (user?.school_id ?? undefined);
+    if (isHighAdmin && !targetSchoolId) {
+      Alert.alert('Pilih Sekolah', 'Silakan cari dan pilih sekolah tujuan terlebih dahulu!');
+      return;
+    }
     Alert.alert(
       'PERINGATAN INISIALISASI',
       'Tindakan ini akan mengatur ulang total persediaan buku di sekolah Anda dan menghitung ulang seluruh data dari nol berdasarkan QR Code aktif yang valid. Apakah Anda yakin?',
@@ -296,7 +354,7 @@ export default function ScanScreen({ navigation }: any) {
           onPress: async () => {
             setLoading(true);
             try {
-              const res = await inventoryAPI.initializeStock(user?.school_id ?? undefined);
+              const res = await inventoryAPI.initializeStock(targetSchoolId);
               Alert.alert(
                 'Inisialisasi Selesai',
                 `Stok perpustakaan berhasil diinisialisasi ulang.\nTotal buku: ${res.data.data.initialized_books}`
@@ -327,9 +385,30 @@ export default function ScanScreen({ navigation }: any) {
     }
   };
 
-  const triggerClearSynced = () => {
-    clearSyncedScans();
-    loadQueue();
+  const handleResolveAnomaly = async (bookId: number) => {
+    Alert.alert(
+      'Selesaikan Anomali',
+      'Apakah Anda yakin ingin menyelesaikan anomali persediaan ini? Jumlah total stok digital buku akan disesuaikan dengan jumlah QR code fisik yang terdaftar.',
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Selesaikan',
+          style: 'destructive',
+          onPress: async () => {
+            setLoadingAnomalies(true);
+            try {
+              await inventoryAPI.deleteAnomaly(bookId);
+              Alert.alert('Sukses', 'Anomali persediaan berhasil diselesaikan!');
+              fetchAnomalies();
+            } catch (err: any) {
+              Alert.alert('Gagal', err.response?.data?.message || 'Gagal menyelesaikan anomali');
+            } finally {
+              setLoadingAnomalies(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const getPendingCount = () => offlineScans.filter((s) => s.sync_status === 'pending').length;
@@ -416,21 +495,46 @@ export default function ScanScreen({ navigation }: any) {
       failed: <Ionicons name="alert-circle-outline" size={20} color={colors.danger500} />,
     };
 
-    const modeLabels = {
-      verification: 'Verifikasi',
-      borrowing: `Pinjam (Siswa: ${item.student_id})`,
-      returning: 'Kembali',
-      inventory: 'Inventaris',
-      audit: 'Audit',
-    };
+    // 1. Resolve Book Name from payload
+    let resolvedBookName = 'Buku Tidak Diketahui';
+    try {
+      const parsed = JSON.parse(item.qr_payload);
+      if (parsed && parsed.book_id) {
+        const cachedBook = getCachedBookById(parsed.book_id);
+        if (cachedBook && cachedBook.book_title) {
+          resolvedBookName = cachedBook.book_title;
+        } else {
+          resolvedBookName = parsed.book_title || parsed.serial || `Buku ID: ${parsed.book_id}`;
+        }
+      } else {
+        resolvedBookName = item.qr_payload;
+      }
+    } catch {
+      resolvedBookName = item.qr_payload;
+    }
+
+    // 2. Resolve Student Class Name
+    let resolvedClassName = 'Kelas: Tidak Diketahui';
+    if (item.student_id) {
+      const cachedStudent = getCachedStudentById(item.student_id);
+      if (cachedStudent && cachedStudent.class_name) {
+        resolvedClassName = `Kelas: ${cachedStudent.class_name}`;
+      } else {
+        resolvedClassName = `Siswa ID: ${item.student_id}`;
+      }
+    } else {
+      resolvedClassName = 'Verifikasi / Pengembalian';
+    }
 
     return (
       <View style={styles.qItem}>
         <View style={styles.qLeft}>
           {statusIcons[item.sync_status]}
-          <View>
-            <Text style={styles.qTitle}>{modeLabels[item.scan_type]}</Text>
-            <Text style={styles.qPayload} numberOfLines={1}>{item.qr_payload}</Text>
+          <View style={{ flex: 1, paddingRight: Spacing.sm }}>
+            <Text style={styles.qTitle}>{resolvedClassName}</Text>
+            <Text style={styles.qPayload} numberOfLines={1}>
+              {resolvedBookName}
+            </Text>
             {item.error_message && (
               <Text style={styles.qError}>{item.error_message}</Text>
             )}
@@ -874,10 +978,6 @@ export default function ScanScreen({ navigation }: any) {
                           {isSyncingQueue ? <ActivityIndicator size="small" color={colors.white} /> : <Ionicons name="sync-outline" size={14} color={colors.white} />}
                           <Text style={styles.qActionText}>Sinkronkan</Text>
                         </TouchableOpacity>
-                        <TouchableOpacity style={[styles.qActionBtn, { backgroundColor: colors.surface600 }]} onPress={triggerClearSynced}>
-                          <Ionicons name="trash-outline" size={14} color={colors.white} />
-                          <Text style={styles.qActionText}>Bersihkan</Text>
-                        </TouchableOpacity>
                       </View>
 
                       {offlineScans.length > 0 ? (
@@ -926,15 +1026,23 @@ export default function ScanScreen({ navigation }: any) {
                         ) : anomalies.length > 0 ? (
                           anomalies.map((anom: any, idx: number) => (
                             <View key={idx} style={styles.anomalyItem}>
-                              <View style={{ flex: 1 }}>
+                              <View style={{ flex: 1, paddingRight: Spacing.xs }}>
                                 <Text style={styles.anomalyBookTitle} numberOfLines={1}>{anom.book_title}</Text>
                                 <Text style={styles.anomalyBookCode}>Kode: {anom.book_code || '-'}</Text>
                                 <Text style={styles.anomalyDesc}>
                                   Stok Digital: {anom.total_stock} pcs | QR Terdaftar: {anom.total_qr_count} | Aktif: {anom.active_qr_count}
                                 </Text>
                               </View>
-                              <View style={styles.anomalyBadge}>
-                                <Text style={styles.anomalyBadgeText}>Mismatch</Text>
+                              <View style={{ alignItems: 'flex-end', gap: Spacing.xs }}>
+                                <View style={styles.anomalyBadge}>
+                                  <Text style={styles.anomalyBadgeText}>Mismatch</Text>
+                                </View>
+                                <TouchableOpacity
+                                  style={{ backgroundColor: colors.danger500, paddingHorizontal: Spacing.sm, paddingVertical: 4, borderRadius: BorderRadius.sm }}
+                                  onPress={() => handleResolveAnomaly(anom.book_id)}
+                                >
+                                  <Text style={{ color: colors.white, fontSize: 10, fontWeight: '700' }}>Selesaikan</Text>
+                                </TouchableOpacity>
                               </View>
                             </View>
                           ))
@@ -960,16 +1068,64 @@ export default function ScanScreen({ navigation }: any) {
 
                     {showAuditPanel && (
                       <View style={[styles.queueContent, { gap: Spacing.md }]}>
+                        {isHighAdmin && (
+                          <View style={{ gap: Spacing.xs, backgroundColor: colors.surface700, padding: Spacing.md, borderRadius: BorderRadius.md }}>
+                            <Text style={{ fontSize: FontSize.xs, fontWeight: '700', color: colors.text }}>Cari & Pilih Sekolah Kontrol</Text>
+                            <View style={styles.inputWrapper}>
+                              <Ionicons name="search-outline" size={16} color={colors.surface400} style={styles.inputIcon} />
+                              <TextInput
+                                style={styles.textInput}
+                                placeholder="Ketik nama sekolah (min 2 karakter)..."
+                                placeholderTextColor={colors.surface400}
+                                value={schoolSearchQuery}
+                                onChangeText={setSchoolSearchQuery}
+                              />
+                            </View>
+                            {schoolLoading && <ActivityIndicator size="small" color={colors.primary400} style={{ marginVertical: Spacing.xs }} />}
+                            {schoolSearchResults.length > 0 && (
+                              <ScrollView style={{ maxHeight: 150, marginTop: Spacing.xs }} keyboardShouldPersistTaps="handled">
+                                {schoolSearchResults.map((school: any) => (
+                                  <TouchableOpacity
+                                    key={school.school_id}
+                                    style={{ padding: Spacing.sm, backgroundColor: selectedSchool?.school_id === school.school_id ? colors.primary500 + '30' : colors.surface900, marginBottom: 4, borderRadius: BorderRadius.sm, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+                                    onPress={() => {
+                                      setSelectedSchool(school);
+                                      setSchoolSearchQuery(school.school_name);
+                                      setSchoolSearchResults([]);
+                                    }}
+                                  >
+                                    <Text style={{ color: colors.text, fontSize: FontSize.xs }}>{school.school_name}</Text>
+                                    {selectedSchool?.school_id === school.school_id && <Ionicons name="checkmark" size={14} color={colors.primary400} />}
+                                  </TouchableOpacity>
+                                ))}
+                              </ScrollView>
+                            )}
+                            {selectedSchool && (
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginTop: Spacing.xs }}>
+                                <Ionicons name="school" size={14} color={colors.success500} />
+                                <Text style={{ fontSize: 10, color: colors.success500, fontWeight: '600' }}>Sekolah Terpilih: {selectedSchool.school_name}</Text>
+                              </View>
+                            )}
+                          </View>
+                        )}
                         <Text style={styles.controlPanelDesc}>
                           Gunakan tombol di bawah ini untuk mensinkronkan ulang data total persediaan fisik vs digital di sekolah ini.
                         </Text>
                         <View style={{ gap: Spacing.sm }}>
-                          <TouchableOpacity style={styles.auditActionBtn} onPress={handleRunAudit}>
+                          <TouchableOpacity
+                            style={[styles.auditActionBtn, isHighAdmin && !selectedSchool && styles.disabledBtn]}
+                            disabled={isHighAdmin && !selectedSchool}
+                            onPress={handleRunAudit}
+                          >
                             <Ionicons name="analytics" size={18} color={colors.white} />
                             <Text style={styles.auditActionText}>Jalankan Audit & Rekonsiliasi</Text>
                           </TouchableOpacity>
 
-                          <TouchableOpacity style={[styles.auditActionBtn, { backgroundColor: colors.danger500 }]} onPress={handleInitializeStock}>
+                          <TouchableOpacity
+                            style={[styles.auditActionBtn, { backgroundColor: colors.danger500 }, isHighAdmin && !selectedSchool && styles.disabledBtn]}
+                            disabled={isHighAdmin && !selectedSchool}
+                            onPress={handleInitializeStock}
+                          >
                             <Ionicons name="refresh-circle-outline" size={18} color={colors.white} />
                             <Text style={styles.auditActionText}>Inisialisasi Ulang Stok (Reset)</Text>
                           </TouchableOpacity>

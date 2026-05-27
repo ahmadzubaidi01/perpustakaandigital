@@ -8,6 +8,10 @@ import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 import api, { booksAPI, categoriesAPI, regionsAPI } from '../../services/api';
 import { resolveImageUrl } from '../../utils/imageUtils';
 import * as ImagePicker from 'expo-image-picker';
+import { checkOnlineStatus } from '../../services/syncService';
+import { insertOfflineBook, insertLocalBookQr } from '../../services/db';
+import * as FileSystem from 'expo-file-system/legacy';
+import qrcode from 'qrcode-generator';
 
 export default function BookCreateEditScreen({ route, navigation }: any) {
   const { bookId } = route.params || {};
@@ -37,6 +41,7 @@ export default function BookCreateEditScreen({ route, navigation }: any) {
   const [schoolId, setSchoolId] = useState<number | null>(null);
   const [coverImageUri, setCoverImageUri] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<any>(null);
+  const [customSerial, setCustomSerial] = useState('');
 
   // Dropdown visibility
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
@@ -127,6 +132,116 @@ export default function BookCreateEditScreen({ route, navigation }: any) {
     }
 
     setSaving(true);
+
+    const online = await checkOnlineStatus();
+    if (!online) {
+      if (isEdit) {
+        Alert.alert('Mode Offline', 'Mengubah katalog buku memerlukan koneksi internet.');
+        setSaving(false);
+        return;
+      }
+
+      // Offline add-book flow
+      try {
+        const targetSchoolId = schoolId || user?.school_id || 1;
+        const tempBookId = -1000 - Math.floor(Math.random() * 1000000);
+        
+        // Copy cover image permanently
+        let finalLocalCoverUrl = '';
+        if (coverImageUri) {
+          try {
+            const BOOK_COVERS_DIR = `${FileSystem.documentDirectory}book_covers/`;
+            const dirInfo = await FileSystem.getInfoAsync(BOOK_COVERS_DIR);
+            if (!dirInfo.exists) {
+              await FileSystem.makeDirectoryAsync(BOOK_COVERS_DIR, { intermediates: true });
+            }
+            const fileName = `cover_offline_${tempBookId}_${Date.now()}.jpg`;
+            const localUri = BOOK_COVERS_DIR + fileName;
+            await FileSystem.copyAsync({
+              from: coverImageUri,
+              to: localUri,
+            });
+            finalLocalCoverUrl = localUri;
+          } catch (e) {
+            console.warn('Failed to copy cover photo offline:', e);
+            finalLocalCoverUrl = coverImageUri;
+          }
+        }
+
+        // Determine serial codes
+        const qty = parseInt(totalStock, 10) || 1;
+        let serialBase = customSerial.trim();
+        if (!serialBase) {
+          const titleClean = bookTitle.trim().replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase();
+          serialBase = `LIB-${targetSchoolId}-${titleClean}-01`;
+        }
+
+        const generatedUUID = () => {
+          return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+          });
+        };
+
+        const incrementSerialNumber = (serial: string): string => {
+          const match = serial.match(/^(.*?)(\d+)$/);
+          if (!match) return `${serial}-1`;
+          const prefix = match[1];
+          const numStr = match[2];
+          const nextNum = parseInt(numStr, 10) + 1;
+          const nextNumStr = String(nextNum).padStart(numStr.length, '0');
+          return `${prefix}${nextNumStr}`;
+        };
+
+        let currentSerial = serialBase;
+        for (let i = 0; i < qty; i++) {
+          let qrSerialNumber = '';
+          if (i === 0) {
+            qrSerialNumber = currentSerial;
+          } else {
+            currentSerial = incrementSerialNumber(currentSerial);
+            qrSerialNumber = currentSerial;
+          }
+
+          const qrUuid = generatedUUID();
+          
+          insertLocalBookQr({
+            book_id: tempBookId,
+            qr_uuid: qrUuid,
+            qr_serial_number: qrSerialNumber,
+            qr_image_url: null,
+            qr_status: 'active'
+          });
+        }
+
+        insertOfflineBook({
+          book_id: tempBookId,
+          book_code: `OFFLINE-${Math.floor(Date.now()/1000)}`,
+          book_title: bookTitle.trim(),
+          author_name: authorName.trim(),
+          book_status: 'available',
+          available_stock: qty,
+          total_stock: qty,
+          cover_image_url: finalLocalCoverUrl,
+          publisher_name: publisherName.trim() || '',
+          publication_year: publicationYear.trim() ? parseInt(publicationYear.trim(), 10) : null,
+          rack_location: rackLocation.trim() || '',
+          category_id: categoryId,
+          isbn_code: isbnCode.trim() || '',
+          book_description: bookDescription.trim() || '',
+          school_id: targetSchoolId,
+        });
+
+        Alert.alert('Sukses', 'Buku berhasil disimpan secara lokal dan akan disinkronkan otomatis saat online!');
+        navigation.goBack();
+      } catch (err: any) {
+        Alert.alert('Gagal Menyimpan', err.message || 'Terjadi kesalahan saat menyimpan data offline.');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
 
     const formData = new FormData();
     formData.append('book_title', bookTitle.trim());
@@ -264,6 +379,13 @@ export default function BookCreateEditScreen({ route, navigation }: any) {
               <Text style={styles.label}>Jumlah Total Stok</Text>
               <TextInput style={styles.input} keyboardType="number-pad" placeholder="Jumlah fisik buku..." placeholderTextColor={colors.surface500} value={totalStock} onChangeText={setTotalStock} />
             </View>
+
+            {!isEdit && (
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Nomor Seri QR Pertama (Kustom, Opsional)</Text>
+                <TextInput style={styles.input} placeholder="Contoh: BUKU-XYZ-01" placeholderTextColor={colors.surface500} value={customSerial} onChangeText={setCustomSerial} />
+              </View>
+            )}
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Deskripsi & Sinopsis</Text>

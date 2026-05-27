@@ -39,29 +39,25 @@ const generateBookQrCodes = async (
 ): Promise<GeneratedQr[]> => {
   const results: GeneratedQr[] = [];
 
-  // Determine if we should generate custom serials
   let currentSerial = '';
-  let isCustom = false;
 
   if (customSerial) {
     currentSerial = customSerial;
-    isCustom = true;
   } else {
-    // If no custom serial is provided, check if the last generated copy of the book has a custom pattern
+    // Look up the last registered copy for that book
     const lastQr = await BookQr.findOne({
       where: { book_id: bookId },
       order: [['book_qr_id', 'DESC']],
       paranoid: false,
     });
-    // Standard format matches /^QR-\d{4}-\d{6}-\d{3}-[A-Z0-9]+$/i. If it does not match, it is a custom pattern!
-    if (lastQr && !/^QR-\d{4}-\d{6}-\d{3}-[A-Z0-9]+$/i.test(lastQr.qr_serial_number)) {
+    if (lastQr) {
       currentSerial = incrementSerialNumber(lastQr.qr_serial_number);
-      isCustom = true;
+    } else {
+      const err = new Error('Kode serial kustom pertama harus diisi untuk buku ini');
+      (err as any).statusCode = 400;
+      throw err;
     }
   }
-
-  // Get current count of QRs for this book to determine sequence
-  const existingCount = await BookQr.count({ where: { book_id: bookId } });
 
   const uploadDir = path.resolve(__dirname, '..', env.UPLOAD_DIR, 'qr');
 
@@ -71,27 +67,22 @@ const generateBookQrCodes = async (
   }
 
   for (let i = 0; i < quantity; i++) {
-    const copyIndex = existingCount + i + 1;
     const qrUuid = uuidv4();
     
     let qrSerialNumber = '';
-    if (isCustom) {
-      if (i === 0) {
-        qrSerialNumber = currentSerial;
-      } else {
-        currentSerial = incrementSerialNumber(currentSerial);
-        qrSerialNumber = currentSerial;
-      }
-
-      // Verify that this generated custom serial doesn't already exist in the system
-      const existing = await BookQr.findOne({ where: { qr_serial_number: qrSerialNumber }, paranoid: false });
-      if (existing) {
-        const err = new Error(`Nomor seri QR '${qrSerialNumber}' sudah terdaftar di sistem`);
-        (err as any).statusCode = 400;
-        throw err;
-      }
+    if (i === 0) {
+      qrSerialNumber = currentSerial;
     } else {
-      qrSerialNumber = generateQrSerialNumber(schoolId, bookId, copyIndex);
+      currentSerial = incrementSerialNumber(currentSerial);
+      qrSerialNumber = currentSerial;
+    }
+
+    // Verify that this generated custom serial doesn't already exist in the system
+    const existing = await BookQr.findOne({ where: { qr_serial_number: qrSerialNumber }, paranoid: false });
+    if (existing) {
+      const err = new Error(`Nomor seri QR '${qrSerialNumber}' sudah terdaftar di sistem`);
+      (err as any).statusCode = 400;
+      throw err;
     }
 
     // QR payload contains encrypted identification data
@@ -108,16 +99,28 @@ const generateBookQrCodes = async (
     const fileName = `qr-${qrSerialNumber}-${Date.now()}.png`;
     const filePath = path.join(uploadDir, fileName);
 
-    await QRCode.toFile(filePath, qrPayload, {
-      type: 'png',
+    const qrOptions = {
+      type: 'png' as const,
       width: 400,
       margin: 2,
       color: {
         dark: '#1E40AF', // Blue color matching design rules
         light: '#FFFFFF',
       },
-      errorCorrectionLevel: 'H', // High error correction for durability
-    });
+      errorCorrectionLevel: 'H' as const,
+    };
+
+    try {
+      // Try strictly enforcing version 2 (25x25 grid size)
+      await QRCode.toFile(filePath, qrPayload, {
+        ...qrOptions,
+        version: 2,
+      });
+    } catch (versionError) {
+      logger.info(`QR payload too large for Version 2 (25x25). Gracefully falling back to default minimum version: ${versionError}`);
+      // Fallback: auto-scale version to prevent crash
+      await QRCode.toFile(filePath, qrPayload, qrOptions);
+    }
 
     const qrImageUrl = `/uploads/qr/${fileName}`;
 
@@ -135,15 +138,23 @@ const generateBookQrCodes = async (
  * Generate QR code as base64 data URL (for inline display/download).
  */
 const generateQrDataUrl = async (payload: string): Promise<string> => {
-  return QRCode.toDataURL(payload, {
+  const qrOptions = {
     width: 400,
     margin: 2,
     color: {
       dark: '#1E40AF',
       light: '#FFFFFF',
     },
-    errorCorrectionLevel: 'H',
-  });
+    errorCorrectionLevel: 'H' as const,
+  };
+  try {
+    return await QRCode.toDataURL(payload, {
+      ...qrOptions,
+      version: 2,
+    });
+  } catch (error) {
+    return await QRCode.toDataURL(payload, qrOptions);
+  }
 };
 
 /**
@@ -204,16 +215,25 @@ const generateMemberQr = async (
   const fileName = `member-${memberQrUuid}-${Date.now()}.png`;
   const filePath = path.join(uploadDir, fileName);
 
-  await QRCode.toFile(filePath, payload, {
-    type: 'png',
+  const qrOptions = {
+    type: 'png' as const,
     width: 400,
     margin: 2,
     color: {
       dark: '#1E40AF',
       light: '#FFFFFF',
     },
-    errorCorrectionLevel: 'H',
-  });
+    errorCorrectionLevel: 'H' as const,
+  };
+
+  try {
+    await QRCode.toFile(filePath, payload, {
+      ...qrOptions,
+      version: 2,
+    });
+  } catch (error) {
+    await QRCode.toFile(filePath, payload, qrOptions);
+  }
 
   return `/uploads/member-qr/${fileName}`;
 };

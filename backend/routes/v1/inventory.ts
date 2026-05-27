@@ -3,6 +3,7 @@ import {
   updateBookQrStatus,
   bulkUpdateQrStatus,
   listStockAnomalies,
+  deleteStockAnomaly,
   getQrTrace,
   runAudit,
   initializeStock,
@@ -38,6 +39,7 @@ const auditSchema = {
 
 // All inventory routes require at least school_admin role
 router.get('/anomalies', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), listStockAnomalies);
+router.delete('/anomalies/:book_id', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), deleteStockAnomaly);
 router.get('/qr/:book_qr_id/trace', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), getQrTrace);
 router.patch('/qr/:book_qr_id/status', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), validate(statusSchema), updateBookQrStatus);
 router.patch('/qr/bulk-status', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), validate(bulkStatusSchema), bulkUpdateQrStatus);
