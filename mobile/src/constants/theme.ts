@@ -87,12 +87,14 @@ const getBackendUrl = () => {
     const hostUri = Constants.expoConfig?.hostUri;
     if (hostUri) {
       const ip = hostUri.split(':')[0];
-      if (ip) return `http://${ip}:5000/api`;
+      if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
+        return `http://${ip}:5000/api`;
+      }
     }
   } catch (e) {
     // Ignore error
   }
-  return Platform.OS === 'android' ? 'http://192.168.56.1:5000/api' : 'http://localhost:5000/api';
+  return Platform.OS === 'android' ? 'http://10.0.2.2:5000/api' : 'http://localhost:5000/api';
 };
 
 export const API_BASE_URL = __DEV__
