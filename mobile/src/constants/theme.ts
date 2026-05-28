@@ -97,6 +97,4 @@ const getBackendUrl = () => {
   return Platform.OS === 'android' ? 'http://10.0.2.2:5000/api' : 'http://localhost:5000/api';
 };
 
-export const API_BASE_URL = __DEV__
-  ? getBackendUrl()
-  : 'https://api.perpustakaanahmad.my.id/api';
+export const API_BASE_URL = 'https://api.perpustakaanahmad.my.id';

@@ -19,6 +19,7 @@ const onlineUsers = new Map<number, Set<string>>();
  */
 const initSocketService = (httpServer: HttpServer): SocketIOServer => {
   io = new SocketIOServer(httpServer, {
+    path: env.NODE_ENV === 'production' ? '/api/socket.io' : '/socket.io',
     cors: {
       origin: env.CORS_ORIGINS,
       credentials: true,

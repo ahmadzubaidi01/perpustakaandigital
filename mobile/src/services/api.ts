@@ -3,8 +3,14 @@ import * as SecureStore from 'expo-secure-store';
 import { API_BASE_URL } from '../constants/theme';
 import { useSyncDiagnosticsStore } from '../store/syncDiagnosticsStore';
 
+const resolveBaseUrl = (url: string) => {
+  if (!url) return '';
+  // Ensure the Axios calls target the /api subpath since Express routes are mounted under '/api'
+  return url.endsWith('/api') ? url : `${url.replace(/\/$/, '')}/api`;
+};
+
 const api: AxiosInstance = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: resolveBaseUrl(API_BASE_URL),
   timeout: 30000,
   headers: { 'Content-Type': 'application/json' },
 });
@@ -170,7 +176,7 @@ api.interceptors.response.use(
             return;
           }
 
-          const res = await axios.post(`${API_BASE_URL}/v1/auth/refresh`, { refresh_token: refreshToken });
+          const res = await axios.post(`${resolveBaseUrl(API_BASE_URL)}/v1/auth/refresh`, { refresh_token: refreshToken });
           const { access_token, refresh_token: newRefresh } = res.data.data.tokens;
           
           await SecureStore.setItemAsync('access_token', access_token);
@@ -314,7 +320,7 @@ export const usersAPI = {
   create: (data: any) => api.post('/v1/users', data),
   update: (id: number, data: any) => api.put(`/v1/users/${id}`, data),
   delete: (id: number) => api.delete(`/v1/users/${id}`),
-  updateProfile: (data: any) => api.put('/v1/users/profile', data),
+  updateProfile: (data: any) => api.put('/v1/users/profile', data, { headers: { 'Content-Type': 'multipart/form-data' } }),
   changePassword: (data: any) => api.put('/v1/users/change-password', data),
   import: (formData: FormData) => api.post('/v1/users/import', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
 };

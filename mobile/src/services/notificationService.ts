@@ -10,8 +10,6 @@ try {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
       shouldShowAlert: true,
-      shouldShowBanner: true,
-      shouldShowList: true,
       shouldPlaySound: true,
       shouldSetBadge: true,
     }),
@@ -67,6 +65,7 @@ export async function triggerLocalNotification(title: string, body: string, data
         body,
         data: data || {},
         sound: true,
+        channelId: Platform.OS === 'android' ? 'default' : undefined,
       },
       trigger: null, // Display immediately
     });
