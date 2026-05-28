@@ -9,6 +9,7 @@ import { borrowingsAPI } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { useTheme } from '../../context/ThemeContext';
 import { checkOnlineStatus } from '../../services/syncService';
+import { getCachedBorrowings, getCachedBookById, getCachedStudentById } from '../../services/db';
 import { useNotificationStore } from '../../store/notificationStore';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 
@@ -45,6 +46,47 @@ export default function BorrowingsScreen({ navigation }: any) {
       setIsOffline(!online);
 
       if (!online) {
+        const offlineData = getCachedBorrowings(searchQuery);
+        const processed = offlineData.map((item: any) => {
+          let status = item.borrowing_status;
+          if (status === 'borrowed' && item.due_date && new Date(item.due_date) < new Date()) {
+            status = 'late';
+          }
+          
+          let bookAuthor = '';
+          if (item.book_id) {
+            const cachedBook = getCachedBookById(item.book_id);
+            if (cachedBook) {
+              bookAuthor = cachedBook.author_name || '';
+            }
+          }
+
+          let studentNisn = '-';
+          if (item.user_id) {
+            const cachedStudent = getCachedStudentById(item.user_id);
+            if (cachedStudent) {
+              studentNisn = cachedStudent.student_id_number || '-';
+            }
+          }
+
+          return {
+            ...item,
+            computed_status: status,
+            book_qr: {
+              book: {
+                book_title: item.book_title || 'Buku Tidak Diketahui',
+                author_name: bookAuthor,
+              }
+            },
+            borrower: {
+              full_name: item.borrower_name || '-',
+              student_id_number: studentNisn,
+              class_name: item.borrower_class || '-',
+            }
+          };
+        });
+
+        setAllBorrowings(processed);
         setLoading(false);
         setRefreshing(false);
         return;
@@ -74,6 +116,52 @@ export default function BorrowingsScreen({ navigation }: any) {
       setAllBorrowings(processed);
     } catch (err: any) {
       setIsOffline(true);
+      
+      // Attempt offline recovery on catch
+      try {
+        const offlineData = getCachedBorrowings(searchQuery);
+        const processed = offlineData.map((item: any) => {
+          let status = item.borrowing_status;
+          if (status === 'borrowed' && item.due_date && new Date(item.due_date) < new Date()) {
+            status = 'late';
+          }
+          
+          let bookAuthor = '';
+          if (item.book_id) {
+            const cachedBook = getCachedBookById(item.book_id);
+            if (cachedBook) {
+              bookAuthor = cachedBook.author_name || '';
+            }
+          }
+
+          let studentNisn = '-';
+          if (item.user_id) {
+            const cachedStudent = getCachedStudentById(item.user_id);
+            if (cachedStudent) {
+              studentNisn = cachedStudent.student_id_number || '-';
+            }
+          }
+
+          return {
+            ...item,
+            computed_status: status,
+            book_qr: {
+              book: {
+                book_title: item.book_title || 'Buku Tidak Diketahui',
+                author_name: bookAuthor,
+              }
+            },
+            borrower: {
+              full_name: item.borrower_name || '-',
+              student_id_number: studentNisn,
+              class_name: item.borrower_class || '-',
+            }
+          };
+        });
+        setAllBorrowings(processed);
+      } catch (innerErr) {
+        console.warn('Failed to load offline borrowings fallback:', innerErr);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);

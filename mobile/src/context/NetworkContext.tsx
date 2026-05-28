@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Animated, Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from './ThemeContext';
-import { checkOnlineStatus, syncOfflineScans, syncMetadataAndCache } from '../services/syncService';
+import { checkOnlineStatus, runFullSynchronization } from '../services/syncService';
 import { Spacing } from '../constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -64,9 +64,8 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setBannerType('online');
         console.log('[NetworkContext] Device returned online. Instantly triggering background synchronization...');
         
-        // Instantly trigger background queue sync and cache refresh
-        syncOfflineScans().catch(err => console.warn('[NetworkContext] Immediate offline sync failed:', err));
-        syncMetadataAndCache().catch(err => console.warn('[NetworkContext] Immediate metadata cache failed:', err));
+        // Instantly trigger unified serialization sync
+        runFullSynchronization().catch(err => console.warn('[NetworkContext] Immediate unified sync failed:', err));
 
         // Animate success banner and then hide it after 3 seconds
         Animated.spring(translateY, {

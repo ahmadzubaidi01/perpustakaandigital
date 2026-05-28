@@ -26,8 +26,17 @@ export interface CachedStudent {
   phone_number?: string | null;
   member_qr_uuid?: string | null;
   school_id?: number | null;
+  user_role?: string | null;
+  sync_status?: string | null;
   updated_at?: string;
   deleted_at?: string | null;
+}
+
+export interface CachedCategory {
+  category_id: number;
+  category_name: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface CachedBorrowing {
@@ -103,6 +112,20 @@ export const initDatabase = (): void => {
   try {
     db = SQLite.openDatabaseSync('perpustakaan_digital.db');
 
+    const CURRENT_SCHEMA_VERSION = 3;
+    const userVersionRow = db.getFirstSync('PRAGMA user_version;') as any;
+    const userVersion = userVersionRow ? userVersionRow.user_version : 0;
+    if (userVersion < CURRENT_SCHEMA_VERSION) {
+      console.log(`[SQLite] Schema version mismatch (local=${userVersion}, current=${CURRENT_SCHEMA_VERSION}). Rebuilding cache tables.`);
+      db.execSync('DROP TABLE IF EXISTS books;');
+      db.execSync('DROP TABLE IF EXISTS students;');
+      db.execSync('DROP TABLE IF EXISTS borrowings;');
+      db.execSync('DROP TABLE IF EXISTS notifications;');
+      db.execSync('DROP TABLE IF EXISTS book_qrs;');
+      db.execSync('DROP TABLE IF EXISTS categories;');
+      db.execSync(`PRAGMA user_version = ${CURRENT_SCHEMA_VERSION};`);
+    }
+
     const addColumnIfNeeded = (tableName: string, columnName: string, columnType: string) => {
       try {
         const info = db.getAllSync(`PRAGMA table_info(${tableName});`);
@@ -130,6 +153,8 @@ export const initDatabase = (): void => {
     addColumnIfNeeded('books', 'school_id', 'INTEGER');
     addColumnIfNeeded('books', 'sync_status', "TEXT DEFAULT 'synced'");
     addColumnIfNeeded('students', 'member_qr_uuid', 'TEXT');
+    addColumnIfNeeded('students', 'user_role', 'TEXT');
+    addColumnIfNeeded('students', 'sync_status', "TEXT DEFAULT 'synced'");
     addColumnIfNeeded('students', 'updated_at', 'TEXT');
     addColumnIfNeeded('students', 'deleted_at', 'TEXT');
     addColumnIfNeeded('borrowings', 'updated_at', 'TEXT');
@@ -175,8 +200,20 @@ export const initDatabase = (): void => {
         phone_number TEXT,
         member_qr_uuid TEXT,
         school_id INTEGER,
+        user_role TEXT DEFAULT 'student_member',
+        sync_status TEXT DEFAULT 'synced',
         updated_at TEXT,
         deleted_at TEXT
+      );
+    `);
+
+    // Create categories cache table
+    db.execSync(`
+      CREATE TABLE IF NOT EXISTS categories (
+        category_id INTEGER PRIMARY KEY,
+        category_name TEXT NOT NULL,
+        created_at TEXT,
+        updated_at TEXT
       );
     `);
     db.execSync('CREATE INDEX IF NOT EXISTS idx_students_name ON students(full_name);');
@@ -348,8 +385,8 @@ export const cacheStudents = (students: CachedStudent[]): void => {
       db.runSync(
         `INSERT OR REPLACE INTO students (
           user_id, student_id_number, full_name, class_name, 
-          email_address, phone_number, member_qr_uuid, school_id, updated_at, deleted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
+          email_address, phone_number, member_qr_uuid, school_id, user_role, sync_status, updated_at, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, NULL);`,
         student.user_id,
         student.student_id_number || null,
         student.full_name,
@@ -358,6 +395,7 @@ export const cacheStudents = (students: CachedStudent[]): void => {
         student.phone_number || null,
         student.member_qr_uuid || null,
         student.school_id || null,
+        student.user_role || 'student_member',
         student.updated_at || new Date().toISOString()
       );
     }
@@ -729,5 +767,236 @@ export const markBookQrSynced = (bookQrId: number): void => {
     db.runSync("UPDATE book_qrs SET sync_status = 'synced' WHERE book_qr_id = ?;", bookQrId);
   } catch (error) {
     handleDatabaseError(error, 'markBookQrSynced');
+  }
+};
+
+// ==========================================
+// CATEGORIES CACHE OPERATIONS
+// ==========================================
+export const cacheCategories = (categories: CachedCategory[]): void => {
+  if (!ensureDatabase()) return;
+  try {
+    db.runSync('DELETE FROM categories;');
+    for (const cat of categories) {
+      db.runSync(
+        `INSERT OR REPLACE INTO categories (category_id, category_name, created_at, updated_at)
+         VALUES (?, ?, ?, ?);`,
+        cat.category_id,
+        cat.category_name,
+        cat.created_at || new Date().toISOString(),
+        cat.updated_at || new Date().toISOString()
+      );
+    }
+    console.log(`[SQLite] Cached ${categories.length} global categories.`);
+  } catch (error) {
+    handleDatabaseError(error, 'cacheCategories');
+  }
+};
+
+export const getCachedCategories = (): CachedCategory[] => {
+  if (!ensureDatabase()) return [];
+  try {
+    return db.getAllSync('SELECT * FROM categories ORDER BY category_name ASC;') as CachedCategory[];
+  } catch (error) {
+    handleDatabaseError(error, 'getCachedCategories');
+    return [];
+  }
+};
+
+// ==========================================
+// ADVANCED OFFLINE STUDENTS AND BOOKS CRUD
+// ==========================================
+export const cacheBookQrs = (qrs: any[]): void => {
+  if (!ensureDatabase()) return;
+  try {
+    for (const qr of qrs) {
+      db.runSync(
+        `INSERT OR REPLACE INTO book_qrs (
+          book_qr_id, book_id, qr_uuid, qr_serial_number, qr_image_url, qr_status, sync_status
+        ) VALUES (?, ?, ?, ?, ?, ?, 'synced');`,
+        qr.book_qr_id,
+        qr.book_id,
+        qr.qr_uuid,
+        qr.qr_serial_number,
+        qr.qr_image_url || null,
+        qr.qr_status || 'active'
+      );
+    }
+  } catch (error) {
+    handleDatabaseError(error, 'cacheBookQrs');
+  }
+};
+
+export const queryCachedStudents = (
+  searchQuery?: string,
+  roleFilter?: string,
+  page: number = 1,
+  limit: number = 15
+): { data: CachedStudent[]; hasNextPage: boolean } => {
+  if (!ensureDatabase()) return { data: [], hasNextPage: false };
+  try {
+    let sql = "SELECT * FROM students WHERE (deleted_at IS NULL OR deleted_at = '')";
+    const params: any[] = [];
+
+    if (searchQuery && searchQuery.trim()) {
+      sql += ' AND (full_name LIKE ? OR student_id_number LIKE ? OR email_address LIKE ? OR member_qr_uuid = ?)';
+      const term = `%${searchQuery.trim()}%`;
+      params.push(term, term, term, searchQuery.trim());
+    }
+
+    if (roleFilter && roleFilter !== 'all') {
+      sql += ' AND user_role = ?';
+      params.push(roleFilter);
+    }
+
+    sql += ' ORDER BY full_name ASC';
+
+    const allMatching = db.getAllSync(sql, ...params) as CachedStudent[];
+    
+    sql += ' LIMIT ? OFFSET ?;';
+    const offset = (page - 1) * limit;
+    params.push(limit, offset);
+
+    const data = db.getAllSync(sql, ...params) as CachedStudent[];
+    const hasNextPage = allMatching.length > page * limit;
+
+    return { data, hasNextPage };
+  } catch (error) {
+    handleDatabaseError(error, 'queryCachedStudents');
+    return { data: [], hasNextPage: false };
+  }
+};
+
+export const insertOfflineStudent = (student: any): void => {
+  if (!ensureDatabase()) return;
+  try {
+    db.runSync(
+      `INSERT INTO students (
+        user_id, student_id_number, full_name, class_name,
+        email_address, phone_number, member_qr_uuid, school_id, user_role, sync_status, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?);`,
+      student.user_id,
+      student.student_id_number || null,
+      student.full_name,
+      student.class_name || null,
+      student.email_address,
+      student.phone_number || null,
+      student.member_qr_uuid || null,
+      student.school_id || null,
+      student.user_role || 'student_member',
+      student.updated_at || new Date().toISOString()
+    );
+    console.log('[SQLite] Offline student inserted successfully, ID:', student.user_id);
+  } catch (error) {
+    handleDatabaseError(error, 'insertOfflineStudent');
+    throw error;
+  }
+};
+
+export const updateOfflineStudent = (userId: number, student: any): void => {
+  if (!ensureDatabase()) return;
+  try {
+    const existing = getCachedStudentById(userId);
+    const newStatus = existing?.sync_status === 'pending' ? 'pending' : 'pending_update';
+    
+    db.runSync(
+      `UPDATE students SET
+        student_id_number = ?, full_name = ?, class_name = ?,
+        email_address = ?, phone_number = ?, user_role = ?, sync_status = ?, updated_at = ?
+       WHERE user_id = ?;`,
+      student.student_id_number || null,
+      student.full_name,
+      student.class_name || null,
+      student.email_address,
+      student.phone_number || null,
+      student.user_role || 'student_member',
+      newStatus,
+      new Date().toISOString(),
+      userId
+    );
+    console.log('[SQLite] Offline student updated successfully, ID:', userId);
+  } catch (error) {
+    handleDatabaseError(error, 'updateOfflineStudent');
+    throw error;
+  }
+};
+
+export const getPendingOfflineStudents = (): any[] => {
+  if (!ensureDatabase()) return [];
+  try {
+    return db.getAllSync("SELECT * FROM students WHERE sync_status = 'pending' ORDER BY user_id ASC;") as any[];
+  } catch (error) {
+    handleDatabaseError(error, 'getPendingOfflineStudents');
+    return [];
+  }
+};
+
+export const getPendingUpdateOfflineStudents = (): any[] => {
+  if (!ensureDatabase()) return [];
+  try {
+    return db.getAllSync("SELECT * FROM students WHERE sync_status = 'pending_update' ORDER BY user_id ASC;") as any[];
+  } catch (error) {
+    handleDatabaseError(error, 'getPendingUpdateOfflineStudents');
+    return [];
+  }
+};
+
+export const updateOfflineStudentId = (oldUserId: number, newUserId: number): void => {
+  if (!ensureDatabase()) return;
+  try {
+    db.runSync('UPDATE students SET user_id = ?, sync_status = \'synced\' WHERE user_id = ?;', newUserId, oldUserId);
+    db.runSync('UPDATE borrowings SET user_id = ? WHERE user_id = ?;', newUserId, oldUserId);
+    console.log(`[SQLite] Reconciled student ID: old=${oldUserId} -> new=${newUserId}`);
+  } catch (error) {
+    handleDatabaseError(error, 'updateOfflineStudentId');
+    throw error;
+  }
+};
+
+export const updateOfflineBook = (bookId: number, book: any): void => {
+  if (!ensureDatabase()) return;
+  try {
+    const existing = getCachedBookById(bookId);
+    const newStatus = existing?.sync_status === 'pending' ? 'pending' : 'pending_update';
+
+    db.runSync(
+      `UPDATE books SET
+        book_title = ?, author_name = ?, book_status = ?,
+        available_stock = ?, total_stock = ?, cover_image_url = ?,
+        publisher_name = ?, publication_year = ?, rack_location = ?,
+        category_id = ?, isbn_code = ?, book_description = ?,
+        school_id = ?, sync_status = ?, updated_at = ?
+       WHERE book_id = ?;`,
+      book.book_title,
+      book.author_name,
+      book.book_status || 'available',
+      book.available_stock || 0,
+      book.total_stock || 0,
+      book.cover_image_url || null,
+      book.publisher_name || '',
+      book.publication_year || null,
+      book.rack_location || '',
+      book.category_id || null,
+      book.isbn_code || '',
+      book.book_description || '',
+      book.school_id || null,
+      newStatus,
+      new Date().toISOString(),
+      bookId
+    );
+    console.log('[SQLite] Offline book updated successfully, ID:', bookId);
+  } catch (error) {
+    handleDatabaseError(error, 'updateOfflineBook');
+    throw error;
+  }
+};
+
+export const getPendingUpdateOfflineBooks = (): any[] => {
+  if (!ensureDatabase()) return [];
+  try {
+    return db.getAllSync("SELECT * FROM books WHERE sync_status = 'pending_update' ORDER BY book_id ASC;") as any[];
+  } catch (error) {
+    handleDatabaseError(error, 'getPendingUpdateOfflineBooks');
+    return [];
   }
 };

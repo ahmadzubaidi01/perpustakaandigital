@@ -6,6 +6,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../store/authStore';
 import { booksAPI, borrowingsAPI, dashboardAPI } from '../../services/api';
 import { resolveImageUrl } from '../../utils/imageUtils';
+import { checkOnlineStatus } from '../../services/syncService';
+import { getCachedBooks, getCachedBorrowings } from '../../services/db';
 import { useTheme } from '../../context/ThemeContext';
 import { useNetwork } from '../../context/NetworkContext';
 import { useNotificationStore } from '../../store/notificationStore';
@@ -20,6 +22,7 @@ export default function HomeScreen({ navigation }: any) {
   const [recentBooks, setRecentBooks] = useState<any[]>([]);
   const [activeBorrowings, setActiveBorrowings] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [isFetching, setIsFetching] = useState(false);
   const { isOnline } = useNetwork();
   
   // Admin stats states
@@ -91,7 +94,52 @@ export default function HomeScreen({ navigation }: any) {
   };
 
   const fetchData = async () => {
+    if (isFetching) return;
+    setIsFetching(true);
     try {
+      const online = await checkOnlineStatus();
+      if (!online) {
+        // Fallback to local SQLite cache
+        const offlineBooks = getCachedBooks().slice(0, 4);
+        setRecentBooks(offlineBooks);
+
+        const offlineBorrowings = getCachedBorrowings().slice(0, 10);
+        const activeStates = ['pending', 'approved', 'borrowed', 'late'];
+        const filteredActive = offlineBorrowings.filter((b: any) => {
+          let status = b.borrowing_status;
+          if (status === 'borrowed' && b.due_date && new Date(b.due_date) < new Date()) {
+            status = 'late';
+          }
+          return activeStates.includes(status);
+        }).slice(0, 3);
+        
+        // Reconstruct nested structure for list rendering offline
+        const processedActive = filteredActive.map((b: any) => {
+          return {
+            ...b,
+            book_qr: {
+              book: {
+                book_id: b.book_id,
+                book_title: b.book_title || 'Unknown',
+              }
+            }
+          };
+        });
+        setActiveBorrowings(processedActive);
+        
+        // Populate mock stats offline if admin
+        if (isAdmin) {
+          setAdminStats({
+            total_books: offlineBooks.length,
+            available_books: offlineBooks.filter(x => x.book_status === 'available').length,
+            borrowed_books: processedActive.length,
+            daily_borrowings: 0
+          });
+        }
+        setIsFetching(false);
+        return;
+      }
+
       const [booksRes, borrowRes] = await Promise.all([
         booksAPI.list({ limit: 4, sort_by: 'created_at', sort_order: 'DESC' }),
         borrowingsAPI.list({ limit: 10 }),
@@ -112,7 +160,9 @@ export default function HomeScreen({ navigation }: any) {
       if (isAdmin) {
         await fetchAdminStats();
       }
-    } catch {}
+    } catch {} finally {
+      setIsFetching(false);
+    }
   };
 
   useEffect(() => {

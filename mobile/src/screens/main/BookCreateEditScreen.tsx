@@ -9,7 +9,7 @@ import api, { booksAPI, categoriesAPI, regionsAPI } from '../../services/api';
 import { resolveImageUrl } from '../../utils/imageUtils';
 import * as ImagePicker from 'expo-image-picker';
 import { checkOnlineStatus } from '../../services/syncService';
-import { insertOfflineBook, insertLocalBookQr } from '../../services/db';
+import { insertOfflineBook, insertLocalBookQr, getCachedCategories, updateOfflineBook, getCachedBookById } from '../../services/db';
 import * as FileSystem from 'expo-file-system/legacy';
 import qrcode from 'qrcode-generator';
 
@@ -51,31 +51,58 @@ export default function BookCreateEditScreen({ route, navigation }: any) {
     const init = async () => {
       setLoading(true);
       try {
-        const catRes = await categoriesAPI.list();
-        setCategories(catRes.data.data || []);
+        const isOnline = await checkOnlineStatus();
+        let cats = [];
+        if (isOnline) {
+          try {
+            const catRes = await categoriesAPI.list();
+            cats = catRes.data.data || [];
+          } catch (e) {
+            cats = getCachedCategories();
+          }
+        } else {
+          cats = getCachedCategories();
+        }
+        setCategories(cats);
 
         if (isHighAdmin) {
-          const schoolRes = await regionsAPI.listSchools({ limit: 100 });
-          setSchools(schoolRes.data.data || []);
+          try {
+            const schoolRes = await regionsAPI.listSchools({ limit: 100 });
+            setSchools(schoolRes.data.data || []);
+          } catch (e) {
+            // High admin offline fallback
+          }
         }
 
         if (isEdit) {
-          const bookRes = await booksAPI.get(bookId);
-          const b = bookRes.data.data;
-          setBookTitle(b.book_title || '');
-          setAuthorName(b.author_name || '');
-          setPublisherName(b.publisher_name || '');
-          setPublicationYear(b.publication_year ? String(b.publication_year) : '');
-          setRackLocation(b.rack_location || '');
-          setCategoryId(b.category_id || null);
-          setIsbnCode(b.isbn_code || '');
-          setTotalStock(String(b.total_stock || '0'));
-          setBookDescription(b.book_description || '');
-          setSchoolId(b.school_id || null);
-          if (b.cover_image_url) {
-            setCoverImageUri(resolveImageUrl(b.cover_image_url));
+          let b = null;
+          if (isOnline) {
+            try {
+              const bookRes = await booksAPI.get(bookId);
+              b = bookRes.data.data;
+            } catch (e) {
+              b = getCachedBookById(bookId);
+            }
           } else {
-            setCoverImageUri(null);
+            b = getCachedBookById(bookId);
+          }
+
+          if (b) {
+            setBookTitle(b.book_title || '');
+            setAuthorName(b.author_name || '');
+            setPublisherName(b.publisher_name || '');
+            setPublicationYear(b.publication_year ? String(b.publication_year) : '');
+            setRackLocation(b.rack_location || '');
+            setCategoryId(b.category_id || null);
+            setIsbnCode(b.isbn_code || '');
+            setTotalStock(String(b.total_stock || '0'));
+            setBookDescription(b.book_description || '');
+            setSchoolId(b.school_id || null);
+            if (b.cover_image_url) {
+              setCoverImageUri(resolveImageUrl(b.cover_image_url));
+            } else {
+              setCoverImageUri(null);
+            }
           }
         }
       } catch (err) {
@@ -136,8 +163,29 @@ export default function BookCreateEditScreen({ route, navigation }: any) {
     const online = await checkOnlineStatus();
     if (!online) {
       if (isEdit) {
-        Alert.alert('Mode Offline', 'Mengubah katalog buku memerlukan koneksi internet.');
-        setSaving(false);
+        try {
+          const updatedBook = {
+            book_title: bookTitle.trim(),
+            author_name: authorName.trim(),
+            publisher_name: publisherName.trim() || '',
+            publication_year: publicationYear.trim() ? parseInt(publicationYear.trim(), 10) : null,
+            rack_location: rackLocation.trim() || '',
+            category_id: categoryId,
+            isbn_code: isbnCode.trim() || '',
+            book_description: bookDescription.trim() || '',
+            school_id: schoolId || user?.school_id || 1,
+            available_stock: parseInt(totalStock, 10) || 0,
+            total_stock: parseInt(totalStock, 10) || 0,
+            cover_image_url: coverImageUri,
+          };
+          updateOfflineBook(bookId, updatedBook);
+          Alert.alert('Sukses (Offline)', 'Perubahan katalog buku disimpan secara lokal dan akan disinkronkan saat online!');
+          navigation.goBack();
+        } catch (err: any) {
+          Alert.alert('Gagal', err.message || 'Gagal menyimpan perubahan secara offline.');
+        } finally {
+          setSaving(false);
+        }
         return;
       }
 

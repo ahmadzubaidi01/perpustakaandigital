@@ -8,6 +8,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { Spacing, FontSize, BorderRadius, API_BASE_URL } from '../../constants/theme';
 import * as DocumentPicker from 'expo-document-picker';
 import { checkOnlineStatus } from '../../services/syncService';
+import { queryCachedStudents, insertOfflineStudent, updateOfflineStudent } from '../../services/db';
 import * as SecureStore from 'expo-secure-store';
 
 export default function UserManagementScreen({ navigation }: any) {
@@ -282,6 +283,30 @@ export default function UserManagementScreen({ navigation }: any) {
     }
 
     try {
+      const isOnline = await checkOnlineStatus();
+      if (!isOnline) {
+        const result = queryCachedStudents(search, roleFilter, p, 15);
+        const list = result.data || [];
+        const hasNext = result.hasNextPage;
+        
+        setUsers((prev) => {
+          if (reset) return list;
+          const merged = [...prev];
+          list.forEach((item: any) => {
+            if (!merged.some((u) => u.user_id === item.user_id)) {
+              merged.push(item);
+            }
+          });
+          return merged;
+        });
+        setHasMore(hasNext);
+        setPage(p);
+        setLoading(false);
+        setLoadingMore(false);
+        setRefreshing(false);
+        return;
+      }
+
       const params: any = { page: p, limit: 15 };
       if (search.trim()) params.search = search.trim();
       if (roleFilter !== 'all') params.user_role = roleFilter;
@@ -436,6 +461,26 @@ export default function UserManagementScreen({ navigation }: any) {
     }
 
     try {
+      const isOnline = await checkOnlineStatus();
+      if (!isOnline) {
+        if (selectedUser) {
+          updateOfflineStudent(selectedUser.user_id, payload);
+          Alert.alert('Sukses (Offline)', 'Perubahan disimpan secara lokal dan akan disinkronisasi saat online!');
+        } else {
+          // Offline creation: generate temporary negative ID
+          const tempId = -Math.floor(Math.random() * 1000000) - 1;
+          const newOfflineUser = {
+            user_id: tempId,
+            ...payload,
+          };
+          insertOfflineStudent(newOfflineUser);
+          Alert.alert('Sukses (Offline)', 'Pengguna disimpan secara lokal dan akan disinkronisasi saat online!');
+        }
+        setShowFormModal(false);
+        fetchUsers(true);
+        return;
+      }
+
       if (selectedUser) {
         await usersAPI.update(selectedUser.user_id, payload);
         Alert.alert('Sukses', 'Profil pengguna berhasil diperbarui!');
@@ -460,6 +505,11 @@ export default function UserManagementScreen({ navigation }: any) {
         style: 'destructive',
         onPress: async () => {
           try {
+            const isOnline = await checkOnlineStatus();
+            if (!isOnline) {
+              Alert.alert('Mode Offline', 'Menghapus pengguna hanya dapat dilakukan saat online.');
+              return;
+            }
             await usersAPI.delete(id);
             Alert.alert('Sukses', 'Akun berhasil dihapus');
             fetchUsers(true);

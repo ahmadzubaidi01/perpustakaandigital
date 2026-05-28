@@ -38,7 +38,7 @@ export default function ProfileScreen({ navigation }: any) {
       setFullName(user.full_name || '');
       setPhoneNumber(user.phone_number || '');
       setClassName(user.class_name || '');
-      setProfilePhotoUri(user.profile_photo_url ? resolveImageUrl(user.profile_photo_url) : null);
+      setProfilePhotoUri(user.profile_photo_url ? `${resolveImageUrl(user.profile_photo_url)}?t=${Date.now()}` : null);
       setImageFile(null);
     }
   }, [user, isEditing]);

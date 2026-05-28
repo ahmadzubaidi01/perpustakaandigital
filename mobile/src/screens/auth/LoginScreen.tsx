@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
-import { authAPI } from '../../services/api';
+import { authAPI, setCachedAccessToken } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { useTheme } from '../../context/ThemeContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,7 +25,21 @@ export default function LoginScreen({ navigation }: any) {
     try {
       const res = await authAPI.login({ email_address: email.trim(), password });
       const { user, tokens } = res.data.data;
-      await login(user, tokens.access_token, tokens.refresh_token);
+      
+      // Pre-set token in axios instance for instant profile retrieval
+      setCachedAccessToken(tokens.access_token);
+      
+      let fullUser = user;
+      try {
+        const profileRes = await authAPI.getProfile();
+        if (profileRes.data?.data) {
+          fullUser = profileRes.data.data;
+        }
+      } catch (profileErr) {
+        console.warn('[Login] Failed to prefetch detailed profile:', profileErr);
+      }
+
+      await login(fullUser, tokens.access_token, tokens.refresh_token);
     } catch (err: any) {
       Alert.alert('Login Gagal', err.response?.data?.message || 'Periksa email dan password Anda');
     } finally {
