@@ -19,7 +19,7 @@ export default function HomePage() {
               Welcome to <span className="text-primary">E-PUSTAKA</span>
             </h1>
             <p className="text-lg sm:text-xl font-semibold text-muted-foreground mb-8 max-w-xl">
-              Sistem Informasi Perpustakaan Digital SMP
+              Sistem Informasi Perpustakaan Digital
             </p>
 
             <div className="flex flex-col sm:flex-row items-center gap-4 max-w-xs sm:max-w-none">
