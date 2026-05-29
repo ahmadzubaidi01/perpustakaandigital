@@ -6,6 +6,7 @@ import { UserRole } from '../../config/constants';
 import { qrScanLimiter } from '../../middleware/rateLimiter';
 import { validate } from '../../middleware/validator';
 import Joi from 'joi';
+import { enforceIdempotency } from '../../middleware/idempotency';
 
 const router = Router();
 
@@ -16,10 +17,9 @@ router.get('/', authenticate, listBookQrs);
 router.get('/scan-logs', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), getScanLogs);
 router.get('/:book_qr_id', authenticate, getBookQr);
 router.get('/:book_qr_id/download', authenticate, getQrDownloadData);
-router.post('/generate', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), validate(generateSchema), generateQrCodes);
-router.post('/scan', authenticate, qrScanLimiter, validate(scanSchema), scanQr);
+router.post('/generate', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), validate(generateSchema), enforceIdempotency, generateQrCodes);
+router.post('/scan', authenticate, qrScanLimiter, validate(scanSchema), enforceIdempotency, scanQr);
 router.patch('/:book_qr_id/status', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), updateQrStatus);
 router.delete('/:book_qr_id', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), deleteQrCode);
 
 export default router;
-

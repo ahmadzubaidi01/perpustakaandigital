@@ -83,6 +83,20 @@ export interface OfflineScan {
   retry_count?: number;
 }
 
+export interface SyncQueueItem {
+  id?: number;
+  operation_id: string; // UUID
+  entity_name: string; // 'books', 'users', 'borrowings', 'categories', 'qr', 'scans'
+  entity_id: string; // the local ID
+  operation_type: 'CREATE' | 'UPDATE' | 'DELETE';
+  payload: string; // JSON
+  timestamp: string;
+  retry_count: number;
+  sync_status: 'pending' | 'synced' | 'failed' | 'conflict';
+  base_updated_at?: string | null; // For conflict resolution
+  error_message?: string | null;
+}
+
 /**
  * Handle database errors. If a native pointer/connection error is detected,
  * resets the connection singleton so that it will self-heal and re-initialize on the next query.
@@ -152,17 +166,20 @@ export const initDatabase = (): void => {
     addColumnIfNeeded('books', 'isbn_code', 'TEXT');
     addColumnIfNeeded('books', 'book_description', 'TEXT');
     addColumnIfNeeded('books', 'school_id', 'INTEGER');
-    addColumnIfNeeded('books', 'sync_status', "TEXT DEFAULT 'synced'");
+    addColumnIfNeeded('books', 'pending_sync', 'INTEGER DEFAULT 0');
+    addColumnIfNeeded('books', 'local_created', 'INTEGER DEFAULT 0');
     addColumnIfNeeded('students', 'member_qr_uuid', 'TEXT');
     addColumnIfNeeded('students', 'user_role', 'TEXT');
-    addColumnIfNeeded('students', 'sync_status', "TEXT DEFAULT 'synced'");
+    addColumnIfNeeded('students', 'pending_sync', 'INTEGER DEFAULT 0');
+    addColumnIfNeeded('students', 'local_created', 'INTEGER DEFAULT 0');
     addColumnIfNeeded('students', 'updated_at', 'TEXT');
     addColumnIfNeeded('students', 'deleted_at', 'TEXT');
     addColumnIfNeeded('borrowings', 'updated_at', 'TEXT');
     addColumnIfNeeded('notifications', 'updated_at', 'TEXT');
     addColumnIfNeeded('notifications', 'deleted_at', 'TEXT');
     addColumnIfNeeded('offline_scans', 'retry_count', 'INTEGER DEFAULT 0');
-    addColumnIfNeeded('categories', 'sync_status', "TEXT DEFAULT 'synced'");
+    addColumnIfNeeded('categories', 'pending_sync', 'INTEGER DEFAULT 0');
+    addColumnIfNeeded('categories', 'local_created', 'INTEGER DEFAULT 0');
     
     // 1. Create books cache table with updated_at/deleted_at support
     db.execSync(`
@@ -182,7 +199,8 @@ export const initDatabase = (): void => {
         isbn_code TEXT,
         book_description TEXT,
         school_id INTEGER,
-        sync_status TEXT DEFAULT 'synced',
+        pending_sync INTEGER DEFAULT 0,
+        local_created INTEGER DEFAULT 0,
         created_at TEXT,
         updated_at TEXT,
         deleted_at TEXT
@@ -203,7 +221,8 @@ export const initDatabase = (): void => {
         member_qr_uuid TEXT,
         school_id INTEGER,
         user_role TEXT DEFAULT 'student_member',
-        sync_status TEXT DEFAULT 'synced',
+        pending_sync INTEGER DEFAULT 0,
+        local_created INTEGER DEFAULT 0,
         updated_at TEXT,
         deleted_at TEXT
       );
@@ -214,7 +233,8 @@ export const initDatabase = (): void => {
       CREATE TABLE IF NOT EXISTS categories (
         category_id INTEGER PRIMARY KEY,
         category_name TEXT NOT NULL,
-        sync_status TEXT DEFAULT 'synced',
+        pending_sync INTEGER DEFAULT 0,
+        local_created INTEGER DEFAULT 0,
         created_at TEXT,
         updated_at TEXT
       );
@@ -288,11 +308,30 @@ export const initDatabase = (): void => {
         qr_serial_number TEXT UNIQUE,
         qr_image_url TEXT,
         qr_status TEXT DEFAULT 'active',
-        sync_status TEXT DEFAULT 'pending'
+        pending_sync INTEGER DEFAULT 0,
+        local_created INTEGER DEFAULT 0
       );
     `);
     db.execSync('CREATE INDEX IF NOT EXISTS idx_book_qrs_book ON book_qrs(book_id);');
     db.execSync('CREATE INDEX IF NOT EXISTS idx_book_qrs_serial ON book_qrs(qr_serial_number);');
+
+    // 7. Create sync_queue table for production-grade Offline Engine
+    db.execSync(`
+      CREATE TABLE IF NOT EXISTS sync_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operation_id TEXT UNIQUE NOT NULL,
+        entity_name TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        operation_type TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        retry_count INTEGER DEFAULT 0,
+        sync_status TEXT DEFAULT 'pending',
+        base_updated_at TEXT,
+        error_message TEXT
+      );
+    `);
+    db.execSync('CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(sync_status);');
 
     (global as any).sqliteDb = db;
     console.log('[SQLite] All caching tables initialized successfully');
@@ -330,8 +369,8 @@ export const cacheBooks = (books: CachedBook[]): void => {
           book_id, book_code, book_title, author_name, book_status, 
           available_stock, total_stock, cover_image_url, publisher_name,
           publication_year, rack_location, category_id, isbn_code,
-          book_description, school_id, sync_status, created_at, updated_at, deleted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, NULL);`,
+          book_description, school_id, pending_sync, local_created, created_at, updated_at, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, NULL);`,
         book.book_id,
         book.book_code || '',
         book.book_title,
@@ -550,6 +589,7 @@ export const queueOfflineScan = (scan: Omit<OfflineScan, 'timestamp' | 'sync_sta
       scan.longitude || null,
       timestamp
     );
+    addToSyncQueue(`scan_${Date.now()}_${Math.random()}`, 'scans', '0', 'CREATE', scan, null);
     console.log('[SQLite] Queued offline scan successfully:', scan.qr_payload);
   } catch (error) {
     handleDatabaseError(error, 'queueOfflineScan');
@@ -606,6 +646,106 @@ export const incrementScanRetry = (id: number): number => {
   } catch (error) {
     handleDatabaseError(error, 'incrementScanRetry');
     return 0;
+  }
+};
+
+export const clearAllCache = (): void => {
+  if (!ensureDatabase()) return;
+  try {
+    db.execSync('DELETE FROM books');
+    db.execSync('DELETE FROM students');
+    db.execSync('DELETE FROM borrowings');
+    db.execSync('DELETE FROM categories');
+    console.log('[SQLite] All cache tables cleared successfully');
+  } catch (error) {
+    handleDatabaseError(error, 'clearAllCache');
+  }
+};
+
+// ==========================================
+// Sync Queue Operations
+// ==========================================
+
+export const addToSyncQueue = (
+  operationId: string,
+  entityName: string,
+  entityId: string,
+  operationType: 'CREATE' | 'UPDATE' | 'DELETE',
+  payload: any,
+  baseUpdatedAt?: string | null
+): void => {
+  if (!ensureDatabase()) return;
+  try {
+    db.runSync(
+      `INSERT INTO sync_queue 
+      (operation_id, entity_name, entity_id, operation_type, payload, timestamp, retry_count, sync_status, base_updated_at) 
+      VALUES (?, ?, ?, ?, ?, ?, 0, 'pending', ?)`,
+      operationId,
+      entityName,
+      entityId,
+      operationType,
+      JSON.stringify(payload),
+      new Date().toISOString(),
+      baseUpdatedAt || null
+    );
+  } catch (error) {
+    handleDatabaseError(error, 'addToSyncQueue');
+  }
+};
+
+export const getPendingSyncQueue = (): SyncQueueItem[] => {
+  if (!ensureDatabase()) return [];
+  try {
+    return db.getAllSync('SELECT * FROM sync_queue WHERE sync_status = ? OR sync_status = ? ORDER BY id ASC', 'pending', 'failed') as SyncQueueItem[];
+  } catch (error) {
+    handleDatabaseError(error, 'getPendingSyncQueue');
+    return [];
+  }
+};
+
+export const updateSyncQueueStatus = (
+  id: number,
+  status: 'pending' | 'synced' | 'failed' | 'conflict',
+  errorMessage?: string
+): void => {
+  if (!ensureDatabase()) return;
+  try {
+    if (status === 'failed' || status === 'conflict') {
+      db.runSync(
+        'UPDATE sync_queue SET sync_status = ?, error_message = ?, retry_count = retry_count + 1 WHERE id = ?',
+        status,
+        errorMessage || null,
+        id
+      );
+    } else {
+      db.runSync(
+        'UPDATE sync_queue SET sync_status = ?, error_message = ? WHERE id = ?',
+        status,
+        errorMessage || null,
+        id
+      );
+    }
+  } catch (error) {
+    handleDatabaseError(error, 'updateSyncQueueStatus');
+  }
+};
+
+export const deleteFromSyncQueue = (id: number): void => {
+  if (!ensureDatabase()) return;
+  try {
+    db.runSync('DELETE FROM sync_queue WHERE id = ?', id);
+  } catch (error) {
+    handleDatabaseError(error, 'deleteFromSyncQueue');
+  }
+};
+
+// Remove synced entities from offline scan logs after successful sync
+export const clearSyncedOfflineScans = (): void => {
+  if (!ensureDatabase()) return;
+  try {
+    db.runSync('DELETE FROM offline_scans WHERE sync_status = ?', 'synced');
+  } catch (error) {
+    handleDatabaseError(error, 'clearSyncedOfflineScans');
   }
 };
 
@@ -677,6 +817,7 @@ export const insertOfflineBook = (book: any): void => {
       book.created_at || new Date().toISOString(),
       book.updated_at || new Date().toISOString()
     );
+    addToSyncQueue(`book_create_${book.book_id}`, 'books', book.book_id.toString(), 'CREATE', book, null);
     console.log('[SQLite] Offline book inserted successfully, ID:', book.book_id);
   } catch (error) {
     handleDatabaseError(error, 'insertOfflineBook');
@@ -706,6 +847,7 @@ export const insertLocalBookQr = (qr: any): void => {
       qr.qr_image_url || null,
       qr.qr_status || 'active'
     );
+    addToSyncQueue(`qr_create_${qr.qr_uuid}`, 'qr', qr.book_id.toString(), 'CREATE', qr, null);
     console.log('[SQLite] Local book QR inserted successfully serial:', qr.qr_serial_number);
   } catch (error) {
     handleDatabaseError(error, 'insertLocalBookQr');
@@ -818,6 +960,7 @@ export const insertOfflineCategory = (category: any): void => {
       new Date().toISOString(),
       new Date().toISOString()
     );
+    addToSyncQueue(`category_create_${category.category_id}`, 'categories', category.category_id.toString(), 'CREATE', category, null);
     console.log('[SQLite] Offline category inserted successfully, ID:', category.category_id);
   } catch (error) {
     handleDatabaseError(error, 'insertOfflineCategory');
@@ -930,6 +1073,7 @@ export const insertOfflineStudent = (student: any): void => {
       student.user_role || 'student_member',
       student.updated_at || new Date().toISOString()
     );
+    addToSyncQueue(`student_create_${student.user_id}`, 'users', student.user_id.toString(), 'CREATE', student, null);
     console.log('[SQLite] Offline student inserted successfully, ID:', student.user_id);
   } catch (error) {
     handleDatabaseError(error, 'insertOfflineStudent');
@@ -958,6 +1102,8 @@ export const updateOfflineStudent = (userId: number, student: any): void => {
       new Date().toISOString(),
       userId
     );
+    const baseUpdated = existing?.updated_at || null;
+    addToSyncQueue(`student_update_${userId}_${Date.now()}`, 'users', userId.toString(), 'UPDATE', student, baseUpdated);
     console.log('[SQLite] Offline student updated successfully, ID:', userId);
   } catch (error) {
     handleDatabaseError(error, 'updateOfflineStudent');
@@ -1028,6 +1174,8 @@ export const updateOfflineBook = (bookId: number, book: any): void => {
       new Date().toISOString(),
       bookId
     );
+    const baseUpdated = existing?.updated_at || null;
+    addToSyncQueue(`book_update_${bookId}_${Date.now()}`, 'books', bookId.toString(), 'UPDATE', book, baseUpdated);
     console.log('[SQLite] Offline book updated successfully, ID:', bookId);
   } catch (error) {
     handleDatabaseError(error, 'updateOfflineBook');

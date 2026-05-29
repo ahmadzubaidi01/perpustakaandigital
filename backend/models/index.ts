@@ -20,6 +20,7 @@ import UserSession from './UserSession';
 import QrScanLog from './QrScanLog';
 import ChatConversation from './ChatConversation';
 import ChatMessage from './ChatMessage';
+import { SyncOperation } from './SyncOperation';
 
 // Collect all models
 const models = {
@@ -42,6 +43,7 @@ const models = {
   QrScanLog,
   ChatConversation,
   ChatMessage,
+  SyncOperation,
 };
 
 // Initialize associations
@@ -72,6 +74,7 @@ export {
   QrScanLog,
   ChatConversation,
   ChatMessage,
+  SyncOperation,
 };
 
 export default models;

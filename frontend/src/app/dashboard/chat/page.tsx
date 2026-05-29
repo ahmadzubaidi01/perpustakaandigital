@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { MessageSquare, Send, Search, Plus, Loader2, UserCircle, Circle, ChevronLeft } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
 import { chatAPI } from '@/lib/api';
 import { useAuthStore, useChatStore, type ChatConversation, type ChatMessage } from '@/lib/store';
 import { initSocket, getSocket, joinConversation, leaveConversation, emitTyping, emitReadReceipt } from '@/lib/socket';
@@ -41,7 +42,7 @@ const roleColors: Record<string, string> = {
   school_admin: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400',
 };
 
-export default function ChatPage() {
+function ChatContent() {
   const { user } = useAuthStore();
   const {
     conversations, setConversations, activeConversationId, setActiveConversation,
@@ -59,6 +60,8 @@ export default function ChatPage() {
   const [recipientSearch, setRecipientSearch] = useState('');
   const [showChatAreaMobile, setShowChatAreaMobile] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const searchParams = useSearchParams();
+  const queryConversationId = searchParams.get('conversation');
 
   // Load conversations
   const loadConversations = useCallback(async () => {
@@ -69,7 +72,15 @@ export default function ChatPage() {
     finally { setLoadingConvs(false); }
   }, [setConversations]);
 
-  useEffect(() => { loadConversations(); }, [loadConversations]);
+  useEffect(() => { 
+    loadConversations().then(() => {
+      // Auto-select conversation if provided in URL
+      if (queryConversationId) {
+        setActiveConversation(parseInt(queryConversationId, 10));
+        setShowChatAreaMobile(true);
+      }
+    });
+  }, [loadConversations, queryConversationId]);
 
   // Initialize socket listeners for real-time chat
   useEffect(() => {
@@ -393,5 +404,12 @@ export default function ChatPage() {
         </div>
       </Modal>
     </div>
+  );
+}
+export default function ChatPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="animate-spin text-primary" /></div>}>
+      <ChatContent />
+    </Suspense>
   );
 }

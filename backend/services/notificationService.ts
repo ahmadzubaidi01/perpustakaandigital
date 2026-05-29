@@ -25,6 +25,7 @@ interface NotificationPayload {
   notification_title: string;
   notification_message: string;
   notification_type: NotificationType;
+  reference_id?: string | null;
 }
 
 /**
@@ -37,6 +38,7 @@ const createInAppNotification = async (payload: NotificationPayload): Promise<vo
       notification_title: payload.notification_title,
       notification_message: payload.notification_message,
       notification_type: payload.notification_type,
+      reference_id: payload.reference_id || null,
       is_read: false,
       sent_at: new Date(),
     });
@@ -54,6 +56,7 @@ const createInAppNotification = async (payload: NotificationPayload): Promise<vo
         notification_title: payload.notification_title,
         notification_message: payload.notification_message,
         notification_type: payload.notification_type,
+        reference_id: payload.reference_id || null,
         is_read: false,
         created_at: (notification as any).createdAt || new Date(),
       });
@@ -488,16 +491,17 @@ const runDailyBorrowingReminders = async (): Promise<void> => {
 const sendChatMessageNotification = async (
   recipientId: number,
   senderName: string,
-  messageText: string
+  messageText: string,
+  conversationId?: string
 ): Promise<void> => {
   try {
-    // Find existing unread message notification from this sender
+    // Find existing unread message notification for this conversation
     const existing = await Notification.findOne({
       where: {
         user_id: recipientId,
         notification_type: NotificationType.ADMIN_MESSAGE,
         is_read: false,
-        notification_title: { [Op.like]: `%Pesan Baru dari ${senderName}%` }
+        reference_id: conversationId || null,
       }
     });
 
@@ -519,6 +523,7 @@ const sendChatMessageNotification = async (
         notification_title: `${count} Pesan Baru dari ${senderName}`,
         notification_message: messageText,
         notification_type: NotificationType.ADMIN_MESSAGE,
+        reference_id: conversationId || null,
         is_read: false,
         created_at: new Date(),
       });
@@ -533,6 +538,7 @@ const sendChatMessageNotification = async (
     notification_title: `Pesan Baru dari ${senderName}`,
     notification_message: messageText,
     notification_type: NotificationType.ADMIN_MESSAGE,
+    reference_id: conversationId,
   });
 };
 

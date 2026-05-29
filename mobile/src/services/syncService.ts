@@ -1,45 +1,33 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import * as FileSystem from 'expo-file-system/legacy';
-import api, { qrAPI, borrowingsAPI, booksAPI, usersAPI, notificationsAPI, categoriesAPI } from './api';
+import { qrAPI, borrowingsAPI, booksAPI, usersAPI, notificationsAPI, categoriesAPI } from './api';
 import { API_BASE_URL } from '../constants/theme';
 import { resolveImageUrl } from '../utils/imageUtils';
 import { 
-  getPendingScans, 
-  markScanSynced, 
-  markScanFailed, 
+  getPendingSyncQueue, 
+  updateSyncQueueStatus, 
+  deleteFromSyncQueue, 
   cacheBooks, 
   cacheStudents, 
   cacheBorrowings, 
   cacheNotifications,
   initDatabase,
-  OfflineScan,
-  incrementScanRetry,
-  getAllScans,
-  getPendingOfflineBooks,
-  getPendingLocalBookQrs,
-  updateOfflineBookId,
-  markBookSynced,
-  markBookQrSynced,
+  clearSyncedOfflineScans,
   cacheCategories,
   cacheBookQrs,
-  getPendingOfflineStudents,
-  getPendingUpdateOfflineStudents,
+  updateOfflineBookId,
   updateOfflineStudentId,
-  getPendingUpdateOfflineBooks,
-  getPendingOfflineCategories,
-  updateOfflineCategoryId
+  updateOfflineCategoryId,
+  SyncQueueItem
 } from './db';
 import { useAuthStore } from '../store/authStore';
 import { useSyncDiagnosticsStore } from '../store/syncDiagnosticsStore';
+import { useSyncEngineStore } from '../store/syncEngineStore';
 
-let isSyncingQueue = false;
-let isSyncingMetadata = false;
-let isSyncingGlobal = false;
 let syncCooldownUntil = 0;
-let backoffDelay = 5000; // start with 5 seconds
+let backoffDelay = 5000;
 
-// Keys for storing sync timestamps in AsyncStorage
 const SYNC_KEYS = {
   BOOKS: 'sync_last_time_books',
   STUDENTS: 'sync_last_time_students',
@@ -47,25 +35,17 @@ const SYNC_KEYS = {
   NOTIFICATIONS: 'sync_last_time_notifications',
 };
 
-/**
- * Check if the device is online by pinging the backend API.
- */
 export const checkOnlineStatus = async (): Promise<boolean> => {
   try {
     const netState = await NetInfo.fetch();
-    if (!netState.isConnected) {
-      return false;
-    }
+    if (!netState.isConnected) return false;
 
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), 3000);
     
-    // Ping online API health endpoint directly using native fetch to bypass circuit breakers/Axios
     const res = await fetch(`${API_BASE_URL}/health`, {
       method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-      },
+      headers: { 'Accept': 'application/json' },
       signal: controller.signal,
     });
     clearTimeout(id);
@@ -76,743 +56,241 @@ export const checkOnlineStatus = async (): Promise<boolean> => {
 };
 
 /**
- * Synchronize all pending offline scans (borrowings/returns queue) to the backend.
- * Ensures transactions are sequentially replayed exactly in transaction order.
+ * Unified Sync Engine: Processes the global sync queue sequentially to guarantee ordering.
  */
-export const syncOfflineScans = async (onProgressUpdate?: () => void): Promise<void> => {
-  if (isSyncingQueue) return;
+export const processSyncQueue = async (onProgressUpdate?: () => void): Promise<void> => {
+  const syncStore = useSyncEngineStore.getState();
+  if (syncStore.currentState === 'SYNCING') return;
+
   if (Date.now() < syncCooldownUntil) {
-    console.log('[SyncService] In retry backoff cooldown. Bypassing sync queue replay.');
+    console.log('[SyncEngine] In retry backoff cooldown. Bypassing sync queue replay.');
+    syncStore.setState('WAITING_NETWORK');
     return;
   }
 
   const isOnline = await checkOnlineStatus();
-  
-  // Set offline recovery diagnostics state
   useSyncDiagnosticsStore.getState().setOfflineSyncRecovery(!isOnline);
 
   if (!isOnline) {
-    console.log('[SyncService] Device is offline. Postponing sync queue.');
+    console.log('[SyncEngine] Device is offline. Postponing sync queue.');
+    syncStore.setState('OFFLINE');
     return;
   }
 
-  // Update diagnostics queue health
-  const pending = getPendingScans();
-  const failed = getAllScans().filter((s: any) => s.sync_status === 'failed').length;
-  useSyncDiagnosticsStore.getState().updateQueueHealth(pending.length, failed);
+  const queue = getPendingSyncQueue();
+  syncStore.setPendingItemsCount(queue.length);
 
-  if (pending.length === 0) {
+  if (queue.length === 0) {
+    syncStore.setState('IDLE');
     return;
   }
 
-  isSyncingQueue = true;
+  syncStore.setState('SYNCING');
   useSyncDiagnosticsStore.getState().recordSyncStart(true);
-  console.log(`[SyncService] Starting sync for ${pending.length} pending scans`);
+  console.log(`[SyncEngine] Starting execution for ${queue.length} pending operations`);
 
   try {
-    for (const scan of pending) {
-      if (!scan.id) continue;
+    for (const item of queue) {
+      if (!item.id) continue;
+      
+      syncStore.setCurrentOperationId(item.operation_id);
+      console.log(`[SyncEngine] Executing ${item.operation_type} on ${item.entity_name} (OpID: ${item.operation_id})`);
 
       try {
-        console.log(`[SyncService] Syncing scan id=${scan.id}, type=${scan.scan_type}`);
-        const startTime = Date.now();
-
-        switch (scan.scan_type) {
-          case 'verification':
-          case 'inventory':
-          case 'audit':
-            await qrAPI.scan({
-              qr_payload: scan.qr_payload,
-              scan_type: scan.scan_type,
-              latitude: scan.latitude || undefined,
-              longitude: scan.longitude || undefined,
-            });
-            break;
-
-          case 'borrowing':
-            if (!scan.student_id) {
-              throw new Error('ID Siswa diperlukan untuk peminjaman');
-            }
-            await borrowingsAPI.quickBorrow({
-              student_id: scan.student_id,
-              qr_payload: scan.qr_payload,
-            });
-            break;
-
-          case 'returning':
-            await borrowingsAPI.quickReturn({
-              qr_payload: scan.qr_payload,
-            });
-            break;
-
-          default:
-            throw new Error(`Tipe scan tidak didukung: ${scan.scan_type}`);
+        const payload = JSON.parse(item.payload);
+        const headers: any = { 'X-Operation-ID': item.operation_id };
+        if (item.base_updated_at) {
+          headers['X-Base-Updated-At'] = item.base_updated_at;
         }
 
-        // Record queue latency in diagnostics
-        const duration = Date.now() - startTime;
-        useSyncDiagnosticsStore.getState().recordQueueLatency(duration);
+        // --- DISPATCH TO CORRECT API BASED ON ENTITY AND ACTION ---
+        let serverResponse: any = null;
 
-        // Mark as synced on success
-        markScanSynced(scan.id);
+        if (item.entity_name === 'books') {
+          const formData = new FormData();
+          Object.keys(payload).forEach(key => {
+            if (key !== 'cover_image_url') {
+              formData.append(key, payload[key] !== null ? String(payload[key]) : '');
+            }
+          });
+          if (payload.cover_image_url && payload.cover_image_url.startsWith('file://')) {
+            formData.append('cover_image', {
+              uri: payload.cover_image_url,
+              name: `cover_${Date.now()}.jpg`,
+              type: 'image/jpeg',
+            } as any);
+          }
+          
+          if (item.operation_type === 'CREATE') {
+            const res = await booksAPI.create(formData, headers);
+            serverResponse = res.data.data;
+            updateOfflineBookId(parseInt(item.entity_id, 10), serverResponse.book_id, serverResponse.book_code);
+          } else if (item.operation_type === 'UPDATE') {
+            await booksAPI.update(parseInt(item.entity_id, 10), formData, headers);
+          } else if (item.operation_type === 'DELETE') {
+            await booksAPI.delete(parseInt(item.entity_id, 10), headers);
+          }
+        } 
+        else if (item.entity_name === 'users') {
+          if (item.operation_type === 'CREATE') {
+            const res = await usersAPI.create(payload, headers);
+            serverResponse = res.data.data;
+            updateOfflineStudentId(parseInt(item.entity_id, 10), serverResponse.user_id);
+          } else if (item.operation_type === 'UPDATE') {
+            await usersAPI.update(parseInt(item.entity_id, 10), payload, headers);
+          } else if (item.operation_type === 'DELETE') {
+            await usersAPI.delete(parseInt(item.entity_id, 10), headers);
+          }
+        }
+        else if (item.entity_name === 'categories') {
+          if (item.operation_type === 'CREATE') {
+            const res = await categoriesAPI.create(payload, headers);
+            serverResponse = res.data.data;
+            updateOfflineCategoryId(parseInt(item.entity_id, 10), serverResponse.category_id);
+          } else if (item.operation_type === 'UPDATE') {
+            await categoriesAPI.update(parseInt(item.entity_id, 10), payload, headers);
+          } else if (item.operation_type === 'DELETE') {
+            await categoriesAPI.delete(parseInt(item.entity_id, 10), headers);
+          }
+        }
+        else if (item.entity_name === 'qr') {
+          if (item.operation_type === 'CREATE') {
+            await qrAPI.generate(payload, headers);
+          }
+        }
+        else if (item.entity_name === 'scans') {
+          if (payload.scan_type === 'borrowing') {
+            await borrowingsAPI.quickBorrow(payload, headers);
+          } else if (payload.scan_type === 'returning') {
+            await borrowingsAPI.quickReturn(payload, headers);
+          } else {
+            await qrAPI.scan(payload, headers);
+          }
+        }
+
+        // Success - remove from queue
+        deleteFromSyncQueue(item.id);
         
-        // Update diagnostics queue health
-        const newPending = getPendingScans().length;
-        const newFailed = getAllScans().filter((s: any) => s.sync_status === 'failed').length;
-        useSyncDiagnosticsStore.getState().updateQueueHealth(newPending, newFailed);
-
+        // Re-calculate queue length
+        const newLength = getPendingSyncQueue().length;
+        syncStore.setPendingItemsCount(newLength);
+        
         if (onProgressUpdate) onProgressUpdate();
-
-        // Successful replay: reset backoff cooldown
-        backoffDelay = 5000;
+        backoffDelay = 5000; // Reset backoff
 
       } catch (error: any) {
-        // If it's a network/server failure, stop queue replay to preserve ordering and trigger backoff cooldown
-        const isNetworkError = !error.response;
-        const isServerError = error.response?.status >= 500;
-        
-        if (isNetworkError || isServerError) {
-          console.warn('[SyncService] Connection or server error during sync queue. Stopping queue.');
-          
-          // Increment diagnostics retry count and log failure
+        const status = error.response?.status;
+        const errMsg = error.response?.data?.message || error.message;
+
+        // 409 Conflict Resolution -> Server Wins
+        if (status === 409) {
+          console.warn(`[SyncEngine] Conflict detected for OpID ${item.operation_id}. Server Wins. Removing local update.`);
+          updateSyncQueueStatus(item.id, 'conflict', 'Conflict: Server has newer version');
+          useSyncDiagnosticsStore.getState().logSyncFailure(item.entity_name, 'Data conflict. Local changes discarded.');
+          // Ideally we would trigger a targeted cache refresh here
+          continue; 
+        }
+
+        // Connection or 5xx error -> Stop queue and backoff
+        if (!error.response || status >= 500) {
+          console.warn('[SyncEngine] Connection or server error. Stopping queue.');
           useSyncDiagnosticsStore.getState().incrementSyncRetries();
-          useSyncDiagnosticsStore.getState().logSyncFailure(scan.scan_type || 'queue', error.message || 'Connection timeout');
           
-          // Apply exponential backoff cooldown
-          backoffDelay = Math.min(backoffDelay * 2, 120000); // Max 120s cooldown
+          backoffDelay = Math.min(backoffDelay * 2, 120000);
           syncCooldownUntil = Date.now() + backoffDelay;
-          console.log(`[SyncService] Active backoff cooldown triggered. Cooldown duration: ${backoffDelay / 1000}s`);
+          
+          syncStore.setState('RETRYING');
+          syncStore.setErrorMessage('Network instability. Will retry later.');
           break;
         }
 
-        // Business/Validation error (e.g. book already borrowed, student limit exceeded, invalid QR)
-        // Mark as failed and store the error message from the backend after 5 failed attempts (Dead-letter logic)
-        const errMsg = error.response?.data?.message || error.message || 'Validation error';
-        const retries = incrementScanRetry(scan.id);
-
-        if (retries >= 5) {
-          console.warn(`[SyncService] Dead-letter isolation triggered for scan id=${scan.id}. Exceeded max 5 attempts. Error: ${errMsg}`);
-          markScanFailed(scan.id, errMsg);
-          useSyncDiagnosticsStore.getState().logSyncFailure(scan.scan_type, `Permanently isolated: ${errMsg}`);
+        // Validation Error (4xx)
+        if (item.retry_count >= 5) {
+          console.warn(`[SyncEngine] Dead-letter: Operation ${item.operation_id} failed 5 times.`);
+          updateSyncQueueStatus(item.id, 'failed', errMsg);
         } else {
-          console.log(`[SyncService] Validation error during sync (Attempt ${retries}/5): ${errMsg}. Leaving pending to try again.`);
+          updateSyncQueueStatus(item.id, 'pending', errMsg);
         }
-
-        // Update diagnostics queue health
-        const newPending = getPendingScans().length;
-        const newFailed = getAllScans().filter((s: any) => s.sync_status === 'failed').length;
-        useSyncDiagnosticsStore.getState().updateQueueHealth(newPending, newFailed);
-
-        if (onProgressUpdate) onProgressUpdate();
       }
     }
 
-    // If we completed everything successfully without breaking out
-    const remainingPending = getPendingScans().length;
-    if (remainingPending === 0) {
+    if (getPendingSyncQueue().length === 0) {
+      syncStore.setState('SUCCESS');
+      syncStore.setLastSyncTime(new Date().toISOString());
       useSyncDiagnosticsStore.getState().recordSyncSuccess();
     }
   } finally {
-    isSyncingQueue = false;
+    if (useSyncEngineStore.getState().currentState === 'SYNCING') {
+      useSyncEngineStore.getState().setState('IDLE');
+    }
     useSyncDiagnosticsStore.getState().recordSyncStart(false);
-    console.log('[SyncService] Sync queue finished');
+    console.log('[SyncEngine] Queue execution finished.');
   }
 };
 
 /**
- * Incremental metadata caching for School Admin role.
- * Queries API for records updated since last sync, utilizing db indexes on updated_at.
+ * Metadata caching for School Admin.
  */
 export const syncMetadataAndCache = async (): Promise<void> => {
-  if (isSyncingMetadata) return;
-
   const user = useAuthStore.getState().user;
-  // STRICT RULE: Offline caching & background sync only applies to School Admin accounts
-  if (user?.user_role !== 'school_admin') {
-    return;
-  }
+  if (user?.user_role !== 'school_admin') return;
 
   const isOnline = await checkOnlineStatus();
-  useSyncDiagnosticsStore.getState().setOfflineSyncRecovery(!isOnline);
-  
-  if (!isOnline) {
-    return;
-  }
-
-  isSyncingMetadata = true;
-  useSyncDiagnosticsStore.getState().recordSyncStart(true);
-  console.log('[SyncService] Starting background metadata cache synchronization...');
+  if (!isOnline) return;
 
   try {
     initDatabase();
-
-    // 1. Sync Books Cache
+    
+    // Books Cache
     try {
       let lastSyncBooks = await AsyncStorage.getItem(SYNC_KEYS.BOOKS) || '';
-      let page = 1;
-      let hasMore = true;
-      let newestTimestamp = lastSyncBooks;
-
-      while (hasMore) {
-        const params: any = { sync: 'true', limit: 100, page };
-        if (lastSyncBooks) params.updated_after = lastSyncBooks;
-        
-        const res = await booksAPI.list(params);
-        const data = res.data.data || [];
-        
-        if (data.length > 0) {
-          cacheBooks(data);
-
-          // Pre-cache cover images to phone storage for school admin
-          try {
-            const BOOK_COVERS_DIR = `${FileSystem.documentDirectory}book_covers/`;
-            const dirInfo = await FileSystem.getInfoAsync(BOOK_COVERS_DIR);
-            if (!dirInfo.exists) {
-              await FileSystem.makeDirectoryAsync(BOOK_COVERS_DIR, { intermediates: true });
-            }
-
-            for (const book of data) {
-              if (book.cover_image_url) {
-                const remoteUrl = resolveImageUrl(book.cover_image_url);
-                if (!remoteUrl) continue;
-
-                const parts = book.cover_image_url.split('/');
-                const filename = parts[parts.length - 1];
-                const localUri = BOOK_COVERS_DIR + filename;
-
-                const fileInfo = await FileSystem.getInfoAsync(localUri);
-                if (!fileInfo.exists) {
-                  FileSystem.downloadAsync(remoteUrl, localUri).catch(() => {});
-                }
-              }
-            }
-          } catch (imgErr) {
-            console.warn('[SyncService] Failed pre-caching cover images:', imgErr);
-          }
-
-          newestTimestamp = data.reduce((max: string, item: any) => 
-            !max || item.updated_at > max ? item.updated_at : max, newestTimestamp
-          );
-          
-          if (data.length < 100) {
-            hasMore = false;
-          } else {
-            page++;
-          }
-        } else {
-          hasMore = false;
-        }
+      const params: any = { sync: 'true', limit: 500 };
+      if (lastSyncBooks) params.updated_after = lastSyncBooks;
+      const res = await booksAPI.list(params);
+      const data = res.data.data || [];
+      if (data.length > 0) {
+        cacheBooks(data);
+        const newest = data.reduce((max: string, item: any) => (!max || item.updated_at > max ? item.updated_at : max), lastSyncBooks);
+        await AsyncStorage.setItem(SYNC_KEYS.BOOKS, newest);
       }
-      
-      if (newestTimestamp !== lastSyncBooks) {
-        await AsyncStorage.setItem(SYNC_KEYS.BOOKS, newestTimestamp);
-        console.log(`[SyncService] Books cache updated incrementally up to: ${newestTimestamp}`);
-      }
-    } catch (err: any) {
-      console.warn('[SyncService] Books sync skipped:', err.message);
-    }
+    } catch (err) {}
 
-    // 2. Sync Students Cache (users in school)
+    // Students Cache
     try {
       let lastSyncStudents = await AsyncStorage.getItem(SYNC_KEYS.STUDENTS) || '';
-      let page = 1;
-      let hasMore = true;
-      let newestTimestamp = lastSyncStudents;
-
-      while (hasMore) {
-        const params: any = { sync: 'true', limit: 100, page };
-        if (lastSyncStudents) params.updated_after = lastSyncStudents;
-
-        const res = await usersAPI.list(params);
-        const data = res.data.data || [];
-
-        if (data.length > 0) {
-          cacheStudents(data);
-          newestTimestamp = data.reduce((max: string, item: any) => 
-            !max || item.updated_at > max ? item.updated_at : max, newestTimestamp
-          );
-          
-          if (data.length < 100) {
-            hasMore = false;
-          } else {
-            page++;
-          }
-        } else {
-          hasMore = false;
-        }
+      const params: any = { sync: 'true', limit: 500 };
+      if (lastSyncStudents) params.updated_after = lastSyncStudents;
+      const res = await usersAPI.list(params);
+      const data = res.data.data || [];
+      if (data.length > 0) {
+        cacheStudents(data);
+        const newest = data.reduce((max: string, item: any) => (!max || item.updated_at > max ? item.updated_at : max), lastSyncStudents);
+        await AsyncStorage.setItem(SYNC_KEYS.STUDENTS, newest);
       }
-      
-      if (newestTimestamp !== lastSyncStudents) {
-        await AsyncStorage.setItem(SYNC_KEYS.STUDENTS, newestTimestamp);
-        console.log(`[SyncService] Students cache updated incrementally up to: ${newestTimestamp}`);
-      }
-    } catch (err: any) {
-      console.warn('[SyncService] Students sync skipped:', err.message);
-    }
+    } catch (err) {}
 
-    // 3. Sync Borrowings Cache
-    try {
-      let lastSyncBorrowings = await AsyncStorage.getItem(SYNC_KEYS.BORROWINGS) || '';
-      let page = 1;
-      let hasMore = true;
-      let newestTimestamp = lastSyncBorrowings;
-
-      while (hasMore) {
-        const params: any = { sync: 'true', limit: 100, page };
-        if (lastSyncBorrowings) params.updated_after = lastSyncBorrowings;
-
-        const res = await borrowingsAPI.list(params);
-        const data = res.data.data || [];
-
-        if (data.length > 0) {
-          cacheBorrowings(data);
-          newestTimestamp = data.reduce((max: string, item: any) => 
-            !max || item.updated_at > max ? item.updated_at : max, newestTimestamp
-          );
-          
-          if (data.length < 100) {
-            hasMore = false;
-          } else {
-            page++;
-          }
-        } else {
-          hasMore = false;
-        }
-      }
-      
-      if (newestTimestamp !== lastSyncBorrowings) {
-        await AsyncStorage.setItem(SYNC_KEYS.BORROWINGS, newestTimestamp);
-        console.log(`[SyncService] Borrowings cache updated incrementally up to: ${newestTimestamp}`);
-      }
-    } catch (err: any) {
-      console.warn('[SyncService] Borrowings sync skipped:', err.message);
-    }
-
-    // 4. Sync Notifications Cache
-    try {
-      let lastSyncNotifications = await AsyncStorage.getItem(SYNC_KEYS.NOTIFICATIONS) || '';
-      let page = 1;
-      let hasMore = true;
-      let newestTimestamp = lastSyncNotifications;
-
-      while (hasMore) {
-        const params: any = { sync: 'true', limit: 100, page };
-        if (lastSyncNotifications) params.updated_after = lastSyncNotifications;
-
-        const res = await notificationsAPI.list(params);
-        const data = res.data.data || [];
-
-        if (data.length > 0) {
-          cacheNotifications(data);
-          newestTimestamp = data.reduce((max: string, item: any) => 
-            !max || item.updated_at > max ? item.updated_at : max, newestTimestamp
-          );
-          
-          if (data.length < 100) {
-            hasMore = false;
-          } else {
-            page++;
-          }
-        } else {
-          hasMore = false;
-        }
-      }
-      
-      if (newestTimestamp !== lastSyncNotifications) {
-        await AsyncStorage.setItem(SYNC_KEYS.NOTIFICATIONS, newestTimestamp);
-        console.log(`[SyncService] Notifications cache updated incrementally up to: ${newestTimestamp}`);
-      }
-    } catch (err: any) {
-      console.warn('[SyncService] Notifications sync skipped:', err.message);
-    }
-
-    // 5. Sync Categories Cache
+    // Categories Cache
     try {
       const res = await categoriesAPI.list();
       const data = res.data.data || [];
-      if (data.length > 0) {
-        cacheCategories(data);
-        console.log(`[SyncService] Categories cache updated: ${data.length} categories`);
-      }
-    } catch (err: any) {
-      console.warn('[SyncService] Categories sync skipped:', err.message);
-    }
-
-    // 6. Sync QR Codes Cache for all books
-    try {
-      let page = 1;
-      let hasMore = true;
-      while (hasMore) {
-        const params: any = { limit: 100, page };
-        const res = await qrAPI.list(params);
-        const data = res.data.data || [];
-        if (data.length > 0) {
-          cacheBookQrs(data);
-          if (data.length < 100) {
-            hasMore = false;
-          } else {
-            page++;
-          }
-        } else {
-          hasMore = false;
-        }
-      }
-      console.log('[SyncService] QR Codes cache synced successfully');
-    } catch (err: any) {
-      console.warn('[SyncService] QR Codes sync skipped:', err.message);
-    }
+      if (data.length > 0) cacheCategories(data);
+    } catch (err) {}
 
   } finally {
-    isSyncingMetadata = false;
-    useSyncDiagnosticsStore.getState().recordSyncStart(false);
-    useSyncDiagnosticsStore.getState().recordSyncSuccess();
-    console.log('[SyncService] Background metadata caching sync finished');
+    console.log('[SyncEngine] Metadata sync finished');
   }
 };
 
 /**
- * Synchronize offline-created books to the backend.
- * Construct multipart FormData, register the books, register QR codes, and reconcile local references.
+ * Main trigger for unified sync pipeline.
  */
-export const syncOfflineCreatedBooks = async (): Promise<void> => {
-  try {
-    const isOnline = await checkOnlineStatus();
-    if (!isOnline) return;
-
-    const pendingBooks = getPendingOfflineBooks();
-    if (pendingBooks.length === 0) return;
-
-    console.log(`[SyncService] Found ${pendingBooks.length} pending offline-created books. Starting sync.`);
-
-    for (const book of pendingBooks) {
-      try {
-        const oldBookId = book.book_id;
-        console.log(`[SyncService] Syncing offline book oldBookId=${oldBookId}, title="${book.book_title}"`);
-
-        // 1. Construct multipart FormData for book metadata and cover image upload
-        const formData = new FormData();
-        formData.append('book_title', book.book_title);
-        formData.append('author_name', book.author_name);
-        formData.append('publisher_name', book.publisher_name || '');
-        if (book.publication_year) {
-          formData.append('publication_year', String(book.publication_year));
-        }
-        formData.append('rack_location', book.rack_location || '');
-        if (book.category_id) {
-          formData.append('category_id', String(book.category_id));
-        }
-        formData.append('isbn_code', book.isbn_code || '');
-        formData.append('total_stock', String(book.total_stock || 1));
-        formData.append('book_description', book.book_description || '');
-        formData.append('school_id', String(book.school_id));
-
-        if (book.cover_image_url && book.cover_image_url.startsWith('file://')) {
-          formData.append('cover_image', {
-            uri: book.cover_image_url,
-            name: `cover_offline_${Date.now()}.jpg`,
-            type: 'image/jpeg',
-          } as any);
-        }
-
-        // 2. Register book online
-        const res = await booksAPI.create(formData);
-        const serverBook = res.data.data;
-        const newBookId = serverBook.book_id;
-        const newBookCode = serverBook.book_code;
-
-        console.log(`[SyncService] Book registered online successfully: newBookId=${newBookId}, code=${newBookCode}`);
-
-        // 3. Register its physical QR copies on server database
-        const localQrs = getPendingLocalBookQrs(oldBookId);
-        console.log(`[SyncService] Found ${localQrs.length} offline QR copies to sync for this book`);
-
-        for (const qr of localQrs) {
-          try {
-            console.log(`[SyncService] Syncing QR serial="${qr.qr_serial_number}" for book id=${newBookId}`);
-            await qrAPI.generate({
-              book_id: newBookId,
-              quantity: 1,
-              custom_serial: qr.qr_serial_number,
-            });
-            
-            // Mark QR as synced in SQLite
-            markBookQrSynced(qr.book_qr_id);
-          } catch (qrErr: any) {
-            console.warn(`[SyncService] Failed to sync QR serial=${qr.qr_serial_number}:`, qrErr.message);
-            if (qrErr.response?.status === 400 || qrErr.response?.data?.message?.includes('sudah terdaftar')) {
-              markBookQrSynced(qr.book_qr_id);
-            }
-          }
-        }
-
-        // 4. Reconcile all local references (replace negative book_id with server-assigned book_id)
-        updateOfflineBookId(oldBookId, newBookId, newBookCode);
-        
-        // Update cover image url to server's remote path
-        if (serverBook.cover_image_url) {
-          const dbInstance = (global as any).sqliteDb;
-          if (dbInstance) {
-            dbInstance.runSync('UPDATE books SET cover_image_url = ? WHERE book_id = ?;', serverBook.cover_image_url, newBookId);
-          }
-        }
-
-        console.log(`[SyncService] Synchronization complete for book title="${book.book_title}"`);
-      } catch (err: any) {
-        console.error(`[SyncService] Failed to sync book "${book.book_title}":`, err.message);
-        if (!err.response || err.response.status >= 500) {
-          break; // Stop sequencing on server/network errors
-        }
-      }
-    }
-  } catch (syncError: any) {
-    console.error('[SyncService] error in syncOfflineCreatedBooks:', syncError.message);
-  }
-};
-
-export const syncOfflineCreatedUsers = async (): Promise<void> => {
-  try {
-    const isOnline = await checkOnlineStatus();
-    if (!isOnline) return;
-
-    const pendingUsers = getPendingOfflineStudents();
-    if (pendingUsers.length === 0) return;
-
-    console.log(`[SyncService] Found ${pendingUsers.length} pending offline-created users. Starting sync.`);
-
-    for (const u of pendingUsers) {
-      try {
-        const oldUserId = u.user_id;
-        console.log(`[SyncService] Syncing offline user oldUserId=${oldUserId}, name="${u.full_name}"`);
-
-        const payload = {
-          full_name: u.full_name,
-          email_address: u.email_address,
-          phone_number: u.phone_number || null,
-          user_role: u.user_role || 'student_member',
-          student_id_number: u.student_id_number || null,
-          class_name: u.class_name || null,
-          regency_id: u.regency_id || null,
-          district_id: u.district_id || null,
-          school_id: u.school_id || null,
-          password: 'Password123!',
-        };
-
-        const res = await usersAPI.create(payload);
-        const serverUser = res.data.data;
-        const newUserId = serverUser.user_id;
-
-        console.log(`[SyncService] User registered online successfully: newUserId=${newUserId}`);
-
-        updateOfflineStudentId(oldUserId, newUserId);
-      } catch (err: any) {
-        console.error(`[SyncService] Failed to sync user "${u.full_name}":`, err.message);
-        if (!err.response || err.response.status >= 500) {
-          break;
-        }
-      }
-    }
-  } catch (err: any) {
-    console.error('[SyncService] error in syncOfflineCreatedUsers:', err.message);
-  }
-};
-
-export const syncOfflineUpdatedUsers = async (): Promise<void> => {
-  try {
-    const isOnline = await checkOnlineStatus();
-    if (!isOnline) return;
-
-    const pendingUsers = getPendingUpdateOfflineStudents();
-    if (pendingUsers.length === 0) return;
-
-    console.log(`[SyncService] Found ${pendingUsers.length} pending offline-updated users. Starting sync.`);
-
-    for (const u of pendingUsers) {
-      try {
-        console.log(`[SyncService] Syncing offline-updated user ID=${u.user_id}, name="${u.full_name}"`);
-
-        const payload = {
-          full_name: u.full_name,
-          email_address: u.email_address,
-          phone_number: u.phone_number || null,
-          user_role: u.user_role || 'student_member',
-          student_id_number: u.student_id_number || null,
-          class_name: u.class_name || null,
-          regency_id: u.regency_id || null,
-          district_id: u.district_id || null,
-          school_id: u.school_id || null,
-        };
-
-        await usersAPI.update(u.user_id, payload);
-        
-        const dbInstance = (global as any).sqliteDb;
-        if (dbInstance) {
-          dbInstance.runSync("UPDATE students SET sync_status = 'synced' WHERE user_id = ?;", u.user_id);
-        }
-        console.log(`[SyncService] User ID=${u.user_id} updated successfully on server`);
-      } catch (err: any) {
-        console.error(`[SyncService] Failed to sync updated user "${u.full_name}":`, err.message);
-        if (!err.response || err.response.status >= 500) {
-          break;
-        }
-      }
-    }
-  } catch (err: any) {
-    console.error('[SyncService] error in syncOfflineUpdatedUsers:', err.message);
-  }
-};
-
-export const syncOfflineUpdatedBooks = async (): Promise<void> => {
-  try {
-    const isOnline = await checkOnlineStatus();
-    if (!isOnline) return;
-
-    const pendingBooks = getPendingUpdateOfflineBooks();
-    if (pendingBooks.length === 0) return;
-
-    console.log(`[SyncService] Found ${pendingBooks.length} pending offline-updated books. Starting sync.`);
-
-    for (const book of pendingBooks) {
-      try {
-        console.log(`[SyncService] Syncing offline-updated book ID=${book.book_id}, title="${book.book_title}"`);
-
-        const formData = new FormData();
-        formData.append('book_title', book.book_title);
-        formData.append('author_name', book.author_name);
-        formData.append('publisher_name', book.publisher_name || '');
-        if (book.publication_year) {
-          formData.append('publication_year', String(book.publication_year));
-        }
-        formData.append('rack_location', book.rack_location || '');
-        if (book.category_id) {
-          formData.append('category_id', String(book.category_id));
-        }
-        formData.append('isbn_code', book.isbn_code || '');
-        formData.append('total_stock', String(book.total_stock || 1));
-        formData.append('book_description', book.book_description || '');
-
-        if (book.cover_image_url && book.cover_image_url.startsWith('file://')) {
-          formData.append('cover_image', {
-            uri: book.cover_image_url,
-            name: `cover_update_${Date.now()}.jpg`,
-            type: 'image/jpeg',
-          } as any);
-        }
-
-        await booksAPI.update(book.book_id, formData);
-        
-        const dbInstance = (global as any).sqliteDb;
-        if (dbInstance) {
-          dbInstance.runSync("UPDATE books SET sync_status = 'synced' WHERE book_id = ?;", book.book_id);
-        }
-        console.log(`[SyncService] Book ID=${book.book_id} updated successfully on server`);
-      } catch (err: any) {
-        console.error(`[SyncService] Failed to sync updated book ID=${book.book_id}:`, err.message);
-        if (!err.response || err.response.status >= 500) {
-          break;
-        }
-      }
-    }
-  } catch (err: any) {
-    console.error('[SyncService] error in syncOfflineUpdatedBooks:', err.message);
-  }
-};
-
-export const syncOfflineCategories = async (): Promise<void> => {
-  try {
-    const isOnline = await checkOnlineStatus();
-    if (!isOnline) return;
-
-    const pendingCats = getPendingOfflineCategories();
-    if (pendingCats.length === 0) return;
-
-    console.log(`[SyncService] Found ${pendingCats.length} pending offline-created categories. Starting sync.`);
-
-    for (const cat of pendingCats) {
-      try {
-        console.log(`[SyncService] Syncing offline-created category ID=${cat.category_id}, name="${cat.category_name}"`);
-        
-        const oldId = cat.category_id;
-        const res = await categoriesAPI.create({ category_name: cat.category_name });
-        const serverCat = res.data.data;
-        const newId = serverCat.category_id;
-
-        console.log(`[SyncService] Category synced successfully: oldId=${oldId} -> newId=${newId}`);
-        updateOfflineCategoryId(oldId, newId);
-      } catch (err: any) {
-        console.error(`[SyncService] Failed to sync category "${cat.category_name}":`, err.message);
-        if (!err.response || err.response.status >= 500) {
-          break; // Stop loop on connection or server error
-        }
-      }
-    }
-  } catch (err: any) {
-    console.error('[SyncService] error in syncOfflineCategories:', err.message);
-  }
-};
-
 export const runFullSynchronization = async (onProgressUpdate?: () => void): Promise<void> => {
-  if (isSyncingGlobal) {
-    console.log('[SyncService] Sync lock active. Overlapping call bypassed.');
-    return;
-  }
-
   const user = useAuthStore.getState().user;
-  if (user?.user_role !== 'school_admin') {
-    return;
-  }
+  if (user?.user_role !== 'school_admin') return;
 
-  const isOnline = await checkOnlineStatus();
-  if (!isOnline) {
-    console.log('[SyncService] Device offline. Unified sync postponed.');
-    return;
-  }
-
-  isSyncingGlobal = true;
-  useSyncDiagnosticsStore.getState().recordSyncStart(true);
-  console.log('[SyncService] Unified Global Sync Lock ACQUIRED. Running sequential sync pipeline.');
-
-  try {
-    initDatabase();
-
-    // 0. Sync offline-created categories (dependency first)
-    await syncOfflineCategories();
-
-    // 1. Sync offline-created books
-    await syncOfflineCreatedBooks();
-
-    // 2. Sync offline-updated books
-    await syncOfflineUpdatedBooks();
-
-    // 3. Sync offline-created users
-    await syncOfflineCreatedUsers();
-
-    // 4. Sync offline-updated users
-    await syncOfflineUpdatedUsers();
-
-    // 5. Replay scan queue sequentially
-    await syncOfflineScans(onProgressUpdate);
-
-    // 6. Refresh fresh metadata from server
-    await syncMetadataAndCache();
-
-    useSyncDiagnosticsStore.getState().recordSyncSuccess();
-    console.log('[SyncService] Unified sync pipeline finished successfully!');
-  } catch (err: any) {
-    console.error('[SyncService] Unified sync failed:', err.message);
-  } finally {
-    isSyncingGlobal = false;
-    useSyncDiagnosticsStore.getState().recordSyncStart(false);
-  }
-};
-
-/**
- * Start periodic background synchronization every 30 seconds.
- */
-export const startAutoSync = (onProgressUpdate?: () => void): (() => void) => {
-  const interval = setInterval(async () => {
-    await runFullSynchronization(onProgressUpdate);
-  }, 30000);
-
-  // Return clean-up function
-  return () => clearInterval(interval);
+  await processSyncQueue(onProgressUpdate);
+  await syncMetadataAndCache();
+  
+  // Cleanup old scans
+  clearSyncedOfflineScans();
 };

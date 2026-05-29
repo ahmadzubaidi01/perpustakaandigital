@@ -174,6 +174,18 @@ const updateUser = asyncHandler(async (req: Request, res: Response): Promise<voi
   }
 
   const oldValues = user.toJSON();
+
+  // Conflict Detection
+  const baseUpdatedAt = req.headers['x-base-updated-at'] as string;
+  if (baseUpdatedAt && user.updated_at) {
+    const clientTime = new Date(baseUpdatedAt).getTime();
+    const serverTime = new Date(user.updated_at).getTime();
+    if (clientTime < serverTime) {
+      apiResponse.conflict(res, 'Conflict: Server has a newer version of this record', { server_updated_at: user.updated_at });
+      return;
+    }
+  }
+
   const { full_name, phone_number, student_id_number, class_name, account_status, user_role, school_id, district_id, regency_id, password } = req.body;
   const updates: any = {};
 

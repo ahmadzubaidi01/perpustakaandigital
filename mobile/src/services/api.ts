@@ -239,20 +239,20 @@ export const authAPI = {
 export const booksAPI = {
   list: (params?: any) => api.get('/v1/books', { params }),
   get: (id: number) => api.get(`/v1/books/${id}`),
-  create: (data: any) => api.post('/v1/books', data, { headers: { 'Content-Type': 'multipart/form-data' } }),
-  update: (id: number, data: any) => api.put(`/v1/books/${id}`, data, { headers: { 'Content-Type': 'multipart/form-data' } }),
-  delete: (id: number) => api.delete(`/v1/books/${id}`),
+  create: (data: any, headers?: any) => api.post('/v1/books', data, { headers: { 'Content-Type': 'multipart/form-data', ...headers } }),
+  update: (id: number, data: any, headers?: any) => api.put(`/v1/books/${id}`, data, { headers: { 'Content-Type': 'multipart/form-data', ...headers } }),
+  delete: (id: number, headers?: any) => api.delete(`/v1/books/${id}`, { headers }),
 };
 
 // Borrowings API
 export const borrowingsAPI = {
   list: (params?: any) => api.get('/v1/borrowings', { params }),
-  create: (data: { book_qr_id: number }) => api.post('/v1/borrowings', data),
-  extend: (id: number) => api.patch(`/v1/borrowings/${id}/extend`),
-  approve: (id: number) => api.patch(`/v1/borrowings/${id}/approve`),
-  return: (id: number) => api.patch(`/v1/borrowings/${id}/return`),
-  quickBorrow: (data: { student_id: number; qr_payload: string }) => api.post('/v1/borrowings/quick-borrow', data),
-  quickReturn: (data: { qr_payload: string }) => api.post('/v1/borrowings/quick-return', data),
+  create: (data: { book_qr_id: number }, headers?: any) => api.post('/v1/borrowings', data, { headers }),
+  extend: (id: number, headers?: any) => api.patch(`/v1/borrowings/${id}/extend`, {}, { headers }),
+  approve: (id: number, headers?: any) => api.patch(`/v1/borrowings/${id}/approve`, {}, { headers }),
+  return: (id: number, headers?: any) => api.patch(`/v1/borrowings/${id}/return`, {}, { headers }),
+  quickBorrow: (data: { student_id: number; qr_payload: string }, headers?: any) => api.post('/v1/borrowings/quick-borrow', data, { headers }),
+  quickReturn: (data: { qr_payload: string }, headers?: any) => api.post('/v1/borrowings/quick-return', data, { headers }),
   searchStudent: (q: string) => api.get('/v1/borrowings/search-student', { params: { q } }),
 };
 
@@ -260,14 +260,14 @@ export const borrowingsAPI = {
 export const qrAPI = {
   list: (params?: any) => api.get('/v1/qr', { params }),
   get: (id: number) => api.get(`/v1/qr/${id}`),
-  generate: (data: { book_id: number; quantity: number; custom_serial?: string }) =>
-    api.post('/v1/qr/generate', data),
-  scan: (data: { qr_payload: string; scan_type?: string; latitude?: number; longitude?: number }) =>
-    api.post('/v1/qr/scan', data),
+  generate: (data: { book_id: number; quantity: number; custom_serial?: string }, headers?: any) =>
+    api.post('/v1/qr/generate', data, { headers }),
+  scan: (data: { qr_payload: string; scan_type?: string; latitude?: number; longitude?: number }, headers?: any) =>
+    api.post('/v1/qr/scan', data, { headers }),
   download: (id: number) => api.get(`/v1/qr/${id}/download`),
   scanLogs: (params?: any) => api.get('/v1/qr/scan-logs', { params }),
-  updateStatus: (id: number, status: string) => api.patch(`/v1/qr/${id}/status`, { qr_status: status }),
-  delete: (id: number) => api.delete(`/v1/qr/${id}`),
+  updateStatus: (id: number, status: string, headers?: any) => api.patch(`/v1/qr/${id}/status`, { qr_status: status }, { headers }),
+  delete: (id: number, headers?: any) => api.delete(`/v1/qr/${id}`, { headers }),
 };
 
 // Notifications API
@@ -317,9 +317,9 @@ export const inventoryAPI = {
 export const usersAPI = {
   list: (params?: any) => api.get('/v1/users', { params }),
   get: (id: number) => api.get(`/v1/users/${id}`),
-  create: (data: any) => api.post('/v1/users', data),
-  update: (id: number, data: any) => api.put(`/v1/users/${id}`, data),
-  delete: (id: number) => api.delete(`/v1/users/${id}`),
+  create: (data: any, headers?: any) => api.post('/v1/users', data, { headers }),
+  update: (id: number, data: any, headers?: any) => api.put(`/v1/users/${id}`, data, { headers }),
+  delete: (id: number, headers?: any) => api.delete(`/v1/users/${id}`, { headers }),
   updateProfile: (data: any) => api.put('/v1/users/profile', data, { headers: { 'Content-Type': 'multipart/form-data' } }),
   changePassword: (data: any) => api.put('/v1/users/change-password', data),
   import: (formData: FormData) => api.post('/v1/users/import', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
@@ -348,9 +348,9 @@ export const regionsAPI = {
 export const categoriesAPI = {
   list: () => api.get('/v1/categories'),
   get: (id: number) => api.get(`/v1/categories/${id}`),
-  create: (data: any) => api.post('/v1/categories', data),
-  update: (id: number, data: any) => api.put(`/v1/categories/${id}`, data),
-  delete: (id: number) => api.delete(`/v1/categories/${id}`),
+  create: (data: any, headers?: any) => api.post('/v1/categories', data, { headers }),
+  update: (id: number, data: any, headers?: any) => api.put(`/v1/categories/${id}`, data, { headers }),
+  delete: (id: number, headers?: any) => api.delete(`/v1/categories/${id}`, { headers }),
 };
 
 // Reviews & Favorites API

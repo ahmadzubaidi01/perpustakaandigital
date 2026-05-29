@@ -37,6 +37,18 @@ const updateBook = asyncHandler(async (req: Request, res: Response): Promise<voi
   if (!isWithinScope(req.user, { school_id: book.school_id, district_id: school?.district_id, regency_id: school?.regency_id })) { apiResponse.forbidden(res, 'Cannot modify book outside your region'); return; }
 
   const oldValues = book.toJSON();
+
+  // Conflict Detection
+  const baseUpdatedAt = req.headers['x-base-updated-at'] as string;
+  if (baseUpdatedAt && book.updated_at) {
+    const clientTime = new Date(baseUpdatedAt).getTime();
+    const serverTime = new Date(book.updated_at).getTime();
+    if (clientTime < serverTime) {
+      apiResponse.conflict(res, 'Conflict: Server has a newer version of this record', { server_updated_at: book.updated_at });
+      return;
+    }
+  }
+
   const { book_title, author_name, publisher_name, isbn_code, publication_year, category_id, school_id, rack_location, total_stock, book_description, book_status } = req.body;
 
   const updates: any = {};

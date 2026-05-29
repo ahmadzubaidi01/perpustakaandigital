@@ -6,7 +6,7 @@ import { settingsAPI } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { useTheme } from '../../context/ThemeContext';
 import { getCachedBooks, clearFailedScans, getPendingScans } from '../../services/db';
-import { syncOfflineScans, syncMetadataAndCache } from '../../services/syncService';
+import { runFullSynchronization } from '../../services/syncService';
 import { useSyncDiagnosticsStore } from '../../store/syncDiagnosticsStore';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 
@@ -32,8 +32,7 @@ export default function SettingsScreen({ navigation }: any) {
   const handleManualSync = async () => {
     setSyncingManual(true);
     try {
-      await syncOfflineScans();
-      await syncMetadataAndCache();
+      await runFullSynchronization();
       Alert.alert('Sukses', 'Proses sinkronisasi manual berhasil diselesaikan!');
     } catch (err: any) {
       Alert.alert('Gagal', err.message || 'Gagal menyinkronkan data.');

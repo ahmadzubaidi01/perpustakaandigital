@@ -5,6 +5,7 @@ import { requireMinRole, requireRole } from '../../middleware/rbac';
 import { UserRole } from '../../config/constants';
 import { validate } from '../../middleware/validator';
 import Joi from 'joi';
+import { enforceIdempotency } from '../../middleware/idempotency';
 
 const router = Router();
 
@@ -15,9 +16,9 @@ const quickReturnSchema = { body: Joi.object({ qr_payload: Joi.string().required
 router.get('/', authenticate, listBorrowings);
 router.get('/search-student', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), searchStudent);
 router.get('/:borrowing_id', authenticate, getBorrowing);
-router.post('/', authenticate, validate(borrowSchema), createBorrowing);
-router.post('/quick-borrow', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), validate(quickBorrowSchema), quickBorrow);
-router.post('/quick-return', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), validate(quickReturnSchema), quickReturn);
+router.post('/', authenticate, validate(borrowSchema), enforceIdempotency, createBorrowing);
+router.post('/quick-borrow', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), validate(quickBorrowSchema), enforceIdempotency, quickBorrow);
+router.post('/quick-return', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), validate(quickReturnSchema), enforceIdempotency, quickReturn);
 router.patch('/:borrowing_id/approve', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), approveBorrowing);
 router.patch('/:borrowing_id/return', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), returnBorrowing);
 router.patch('/:borrowing_id/extend', authenticate, extendBorrowing);

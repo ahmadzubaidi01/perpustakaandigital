@@ -8,7 +8,7 @@ import { qrAPI, borrowingsAPI, inventoryAPI, regionsAPI } from '../../services/a
 import { useAuthStore } from '../../store/authStore';
 import { useTheme } from '../../context/ThemeContext';
 import { queueOfflineScan, getAllScans, clearSyncedScans, OfflineScan, getCachedBookById, getCachedStudentById, getCachedStudents } from '../../services/db';
-import { checkOnlineStatus, syncOfflineScans } from '../../services/syncService';
+import { checkOnlineStatus, runFullSynchronization } from '../../services/syncService';
 import { useNetwork } from '../../context/NetworkContext';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
 
@@ -374,7 +374,7 @@ export default function ScanScreen({ navigation }: any) {
   const triggerManualSync = async () => {
     setIsSyncingQueue(true);
     try {
-      await syncOfflineScans();
+      runFullSynchronization();
       loadQueue();
       Alert.alert('Sinkronisasi Selesai', 'Antrean offline berhasil diproses.');
       fetchAnomalies();

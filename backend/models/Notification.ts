@@ -9,6 +9,7 @@ interface NotificationAttributes {
   notification_message: string;
   notification_type: NotificationType;
   is_read: boolean;
+  reference_id?: string | null;
   sent_at: Date | null;
   created_at?: Date;
   updated_at?: Date;
@@ -16,7 +17,7 @@ interface NotificationAttributes {
 }
 
 interface NotificationCreationAttributes extends Optional<NotificationAttributes,
-  'notification_id' | 'is_read' | 'sent_at' | 'deleted_at'
+  'notification_id' | 'is_read' | 'reference_id' | 'sent_at' | 'deleted_at'
 > {}
 
 class Notification extends Model<NotificationAttributes, NotificationCreationAttributes> implements NotificationAttributes {
@@ -26,6 +27,7 @@ class Notification extends Model<NotificationAttributes, NotificationCreationAtt
   public notification_message!: string;
   public notification_type!: NotificationType;
   public is_read!: boolean;
+  public reference_id!: string | null;
   public sent_at!: Date | null;
   public readonly created_at!: Date;
   public readonly updated_at!: Date;
@@ -73,6 +75,11 @@ Notification.init(
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: false, // is_read MUST default to false
+    },
+    reference_id: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      defaultValue: null,
     },
     sent_at: {
       type: DataTypes.DATE,

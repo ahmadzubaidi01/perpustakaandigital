@@ -5,6 +5,7 @@ import { requireMinRole, enforceRegionalScope } from '../../middleware/rbac';
 import { UserRole } from '../../config/constants';
 import { uploadSingle } from '../../middleware/upload';
 import { validate } from '../../middleware/validator';
+import { enforceIdempotency } from '../../middleware/idempotency';
 import Joi from 'joi';
 
 const router = Router();
@@ -14,8 +15,8 @@ const updateBookSchema = { body: Joi.object({ book_title: Joi.string().min(1).ma
 
 router.get('/', authenticate, listBooks);
 router.get('/:book_id', authenticate, getBook);
-router.post('/', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), uploadSingle('cover_image'), validate(createBookSchema), createBook);
-router.put('/:book_id', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), uploadSingle('cover_image'), validate(updateBookSchema), updateBook);
-router.delete('/:book_id', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), deleteBook);
+router.post('/', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), uploadSingle('cover_image'), validate(createBookSchema), enforceIdempotency, createBook);
+router.put('/:book_id', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), uploadSingle('cover_image'), validate(updateBookSchema), enforceIdempotency, updateBook);
+router.delete('/:book_id', authenticate, requireMinRole(UserRole.SCHOOL_ADMIN), enforceIdempotency, deleteBook);
 
 export default router;

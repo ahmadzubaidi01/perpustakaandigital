@@ -207,7 +207,11 @@ export default function NotificationsPage() {
                 onClick={() => {
                   if (!n.is_read) markRead(n.notification_id);
                   if (n.notification_type === 'admin_message') {
-                    router.push('/dashboard/chat');
+                    if (n.reference_id) {
+                      router.push(`/dashboard/chat?conversation=${n.reference_id}`);
+                    } else {
+                      router.push('/dashboard/chat');
+                    }
                   }
                 }}
                 className={`flex items-start gap-4 p-4 border-l-4 transition-all duration-200 group ${

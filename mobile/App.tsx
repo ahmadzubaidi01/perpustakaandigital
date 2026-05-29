@@ -9,7 +9,7 @@ import { useAuthStore } from './src/store/authStore';
 import { authAPI } from './src/services/api';
 import { Colors } from './src/constants/theme';
 import { initDatabase } from './src/services/db';
-import { startAutoSync } from './src/services/syncService';
+import { runFullSynchronization } from './src/services/syncService';
 
 function AppContent() {
   const { isLoading, hydrate, setUser, setLoading, logout } = useAuthStore();
@@ -18,8 +18,8 @@ function AppContent() {
     // Initialize SQLite database
     initDatabase();
     
-    // Start background auto-sync (runs every 30 seconds)
-    const stopSync = startAutoSync();
+    // Perform full background sync
+    runFullSynchronization();
 
     const init = async () => {
       // 1. Hydrate the session from SecureStore immediately for instant load
@@ -52,7 +52,7 @@ function AppContent() {
     init();
 
     return () => {
-      stopSync();
+      // Any necessary cleanup
     };
   }, []);
 
