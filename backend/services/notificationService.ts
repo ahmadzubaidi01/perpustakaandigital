@@ -490,6 +490,44 @@ const sendChatMessageNotification = async (
   senderName: string,
   messageText: string
 ): Promise<void> => {
+  try {
+    // Find existing unread message notification from this sender
+    const existing = await Notification.findOne({
+      where: {
+        user_id: recipientId,
+        notification_type: NotificationType.ADMIN_MESSAGE,
+        is_read: false,
+        notification_title: { [Op.like]: `%Pesan Baru dari ${senderName}%` }
+      }
+    });
+
+    if (existing) {
+      // Group them up
+      const match = existing.notification_title.match(/^(\d+)\s+Pesan Baru/);
+      const count = match ? parseInt(match[1], 10) + 1 : 2;
+      
+      await existing.update({
+        notification_title: `${count} Pesan Baru dari ${senderName}`,
+        notification_message: messageText,
+        sent_at: new Date()
+      });
+
+      // Emit socket event for the updated notification
+      const { emitNotification } = require('./socketService');
+      emitNotification(recipientId, {
+        notification_id: existing.notification_id,
+        notification_title: `${count} Pesan Baru dari ${senderName}`,
+        notification_message: messageText,
+        notification_type: NotificationType.ADMIN_MESSAGE,
+        is_read: false,
+        created_at: new Date(),
+      });
+      return;
+    }
+  } catch (err: any) {
+    logger.warn('Failed to group chat notifications', { error: err.message });
+  }
+
   await createInAppNotification({
     user_id: recipientId,
     notification_title: `Pesan Baru dari ${senderName}`,

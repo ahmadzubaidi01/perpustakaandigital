@@ -2,6 +2,7 @@
 
 import { io, Socket } from 'socket.io-client';
 import Cookies from 'js-cookie';
+import { useChatStore } from './store';
 
 const isDev = process.env.NODE_ENV === 'development';
 const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 
@@ -33,6 +34,11 @@ export const initSocket = (): Socket | null => {
 
   socket.on('disconnect', (reason) => {
     console.log('[Socket.IO] Disconnected:', reason);
+  });
+
+  // Global listener for online status
+  socket.on('user:online', (data: { online_users: number[] }) => {
+    useChatStore.getState().setOnlineUsers(data.online_users);
   });
 
   socket.on('connect_error', (error) => {

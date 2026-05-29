@@ -26,7 +26,9 @@ import {
   getPendingOfflineStudents,
   getPendingUpdateOfflineStudents,
   updateOfflineStudentId,
-  getPendingUpdateOfflineBooks
+  getPendingUpdateOfflineBooks,
+  getPendingOfflineCategories,
+  updateOfflineCategoryId
 } from './db';
 import { useAuthStore } from '../store/authStore';
 import { useSyncDiagnosticsStore } from '../store/syncDiagnosticsStore';
@@ -715,6 +717,39 @@ export const syncOfflineUpdatedBooks = async (): Promise<void> => {
   }
 };
 
+export const syncOfflineCategories = async (): Promise<void> => {
+  try {
+    const isOnline = await checkOnlineStatus();
+    if (!isOnline) return;
+
+    const pendingCats = getPendingOfflineCategories();
+    if (pendingCats.length === 0) return;
+
+    console.log(`[SyncService] Found ${pendingCats.length} pending offline-created categories. Starting sync.`);
+
+    for (const cat of pendingCats) {
+      try {
+        console.log(`[SyncService] Syncing offline-created category ID=${cat.category_id}, name="${cat.category_name}"`);
+        
+        const oldId = cat.category_id;
+        const res = await categoriesAPI.create({ category_name: cat.category_name });
+        const serverCat = res.data.data;
+        const newId = serverCat.category_id;
+
+        console.log(`[SyncService] Category synced successfully: oldId=${oldId} -> newId=${newId}`);
+        updateOfflineCategoryId(oldId, newId);
+      } catch (err: any) {
+        console.error(`[SyncService] Failed to sync category "${cat.category_name}":`, err.message);
+        if (!err.response || err.response.status >= 500) {
+          break; // Stop loop on connection or server error
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error('[SyncService] error in syncOfflineCategories:', err.message);
+  }
+};
+
 export const runFullSynchronization = async (onProgressUpdate?: () => void): Promise<void> => {
   if (isSyncingGlobal) {
     console.log('[SyncService] Sync lock active. Overlapping call bypassed.');
@@ -738,6 +773,9 @@ export const runFullSynchronization = async (onProgressUpdate?: () => void): Pro
 
   try {
     initDatabase();
+
+    // 0. Sync offline-created categories (dependency first)
+    await syncOfflineCategories();
 
     // 1. Sync offline-created books
     await syncOfflineCreatedBooks();

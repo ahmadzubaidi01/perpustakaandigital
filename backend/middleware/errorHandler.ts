@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import logger from '../utils/logger';
 import apiResponse from '../utils/apiResponse';
 import env from '../config/environment';
+import { logStream } from '../services/logStream';
 
 /**
  * Custom application error class.
@@ -48,6 +49,17 @@ const errorHandler = (err: any, req: Request, res: Response, _next: NextFunction
       url: req.originalUrl,
     });
   }
+
+  logStream.emitLog({
+    type: statusCode >= 500 ? 'ERROR' : 'WARNING',
+    message: err.message || message,
+    stack: err.stack,
+    method: req.method,
+    endpoint: req.originalUrl,
+    statusCode,
+    ip: req.ip,
+    userId: req.user?.user_id || null,
+  });
 
   // Handle specific error types
 

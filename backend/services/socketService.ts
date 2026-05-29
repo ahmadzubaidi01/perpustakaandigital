@@ -3,6 +3,7 @@ import { Server as SocketIOServer, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import env from '../config/environment';
 import logger from '../utils/logger';
+import { logStream } from './logStream';
 
 /**
  * Socket.IO real-time service.
@@ -13,6 +14,19 @@ let io: SocketIOServer | null = null;
 
 // Track online users: userId -> Set of socketIds
 const onlineUsers = new Map<number, Set<string>>();
+
+// Track socket reconnect loops
+const reconnectTracker = new Map<number, { count: number; lastTime: number }>();
+
+// Prune reconnectTracker every 5 minutes to prevent memory leaks
+setInterval(() => {
+  const now = Date.now();
+  for (const [userId, tracker] of reconnectTracker.entries()) {
+    if (now - tracker.lastTime > 60000) {
+      reconnectTracker.delete(userId);
+    }
+  }
+}, 300000);
 
 /**
  * Initialize Socket.IO server attached to Express HTTP server.
@@ -67,6 +81,32 @@ const initSocketService = (httpServer: HttpServer): SocketIOServer => {
 
     logger.info('Socket connected', { userId, socketId: socket.id });
 
+    // Track reconnect loops
+    const now = Date.now();
+    const tracker = reconnectTracker.get(userId);
+    if (tracker) {
+      if (now - tracker.lastTime < 5000) { // Reconnected within 5 seconds
+        tracker.count += 1;
+        if (tracker.count > 5) {
+          logStream.emitLog({
+            type: 'WARNING',
+            message: 'WEBSOCKET RECONNECT LOOP DETECTED',
+            userId,
+            socketId: socket.id,
+            retryCount: tracker.count
+          });
+          tracker.count = 0; // Reset after warning
+        }
+      } else {
+        tracker.count = 1;
+      }
+      tracker.lastTime = now;
+    } else {
+      reconnectTracker.set(userId, { count: 1, lastTime: now });
+    }
+
+    logStream.emitLog({ type: 'WEBSOCKET', message: 'Socket connected', userId, socketId: socket.id });
+
     // Handle typing indicators
     socket.on('chat:typing', (data: { conversation_id: number; typing: boolean }) => {
       socket.to(`conversation:${data.conversation_id}`).emit('chat:typing', {
@@ -110,6 +150,7 @@ const initSocketService = (httpServer: HttpServer): SocketIOServer => {
         }
       }
       logger.info('Socket disconnected', { userId, socketId: socket.id });
+      logStream.emitLog({ type: 'WEBSOCKET', message: 'Socket disconnected', userId, socketId: socket.id });
     });
   });
 

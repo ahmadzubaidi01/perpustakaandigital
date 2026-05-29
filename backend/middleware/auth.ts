@@ -88,7 +88,7 @@ const authenticate = async (req: Request, res: Response, next: NextFunction): Pr
       apiResponse.unauthorized(res, 'Invalid access token');
       return;
     }
-    logger.error('Authentication error', { error: error.message });
+    logger.error('Authentication error', { error: error.message, stack: error.stack });
     apiResponse.internalError(res, 'Authentication failed');
   }
 };

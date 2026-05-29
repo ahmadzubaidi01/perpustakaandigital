@@ -7,6 +7,9 @@ import logger from './utils/logger';
 // Global error handlers to prevent abrupt process termination
 process.on('uncaughtException', (error) => {
   logger.error('Uncaught Exception captured globally', { error: error.message, stack: error.stack });
+  // Need to use require since it's before imports, or just let the later imports hoist.
+  // Actually ES modules imports are hoisted, but this is typescript. 
+  // We'll move the logStream import up.
 });
 
 process.on('unhandledRejection', (reason: any) => {
@@ -31,12 +34,34 @@ import apiRoutes from './routes/index';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { initSocketService } from './services/socketService';
 
+import { serverHealthMonitor } from './services/serverHealth';
+import { logStream } from './services/logStream';
+import { realtimeLogger } from './middleware/logger';
+import { trackRequestMiddleware } from './middleware/requestTracker';
+import logsRoute from './routes/logs';
+
+// Update global error handlers to emit to logStream
+process.on('uncaughtException', (error) => {
+  logStream.emitLog({ type: 'ERROR', message: 'Uncaught Exception', stack: error.stack });
+});
+process.on('unhandledRejection', (reason: any) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  const stack = reason instanceof Error ? reason.stack : undefined;
+  logStream.emitLog({ type: 'ERROR', message: `Unhandled Rejection: ${msg}`, stack });
+});
+
 // Import models to initialize associations
 import './models/index';
 
 const app: Application = express();
 const httpServer = http.createServer(app);
 app.set('trust proxy', 1);
+
+// Start Server Health Monitor
+serverHealthMonitor.start(5000);
+
+// Mount logs dashboard route (before tracking to avoid self-logging)
+app.use('/logs', logsRoute);
 
 // Security middleware
 app.use(helmet({
@@ -56,6 +81,10 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 app.use(compression());
+
+// Realtime Monitoring & Tracking Middleware
+app.use(trackRequestMiddleware);
+app.use(realtimeLogger);
 
 // Serve uploaded files (prevent direct executable access)
 const upload_path = path.resolve(__dirname, env.UPLOAD_DIR);

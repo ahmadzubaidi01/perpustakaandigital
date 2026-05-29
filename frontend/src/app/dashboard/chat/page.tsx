@@ -83,17 +83,11 @@ export default function ChatPage() {
       loadConversations();
     };
 
-    const handleOnline = (data: { online_users: number[] }) => {
-      setOnlineUsers(data.online_users);
-    };
-
     socket.on('chat:message', handleMessage);
-    socket.on('user:online', handleOnline);
 
     return () => {
       // Remove ONLY our specific handler references
       socket.off('chat:message', handleMessage);
-      socket.off('user:online', handleOnline);
     };
   }, [addMessage, setOnlineUsers, loadConversations]);
 

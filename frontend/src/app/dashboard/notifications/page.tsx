@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Bell, Check, CheckCheck, Trash, Inbox, AlertTriangle, AlertCircle, Info, Calendar } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Bell, Check, CheckCheck, Trash, Inbox, AlertTriangle, AlertCircle, Info, Calendar, MessageSquare, ArrowRight } from 'lucide-react';
 import { notificationsAPI } from '@/lib/api';
 import { useNotificationStore } from '@/lib/store';
 import toast from 'react-hot-toast';
@@ -55,9 +56,40 @@ const typeThemes: Record<string, NotificationTheme> = {
     border: 'border-l-purple-500',
     icon: Check,
   },
+  admin_message: {
+    bg: 'bg-indigo-50 dark:bg-indigo-950/20',
+    text: 'text-indigo-600 dark:text-indigo-400',
+    border: 'border-l-indigo-500',
+    icon: MessageSquare,
+  },
+  borrowing_event: {
+    bg: 'bg-sky-50 dark:bg-sky-950/20',
+    text: 'text-sky-600 dark:text-sky-400',
+    border: 'border-l-sky-500',
+    icon: Info,
+  },
+  return_event: {
+    bg: 'bg-teal-50 dark:bg-teal-950/20',
+    text: 'text-teal-600 dark:text-teal-400',
+    border: 'border-l-teal-500',
+    icon: CheckCheck,
+  },
+  stock_anomaly: {
+    bg: 'bg-orange-50 dark:bg-orange-950/20',
+    text: 'text-orange-600 dark:text-orange-400',
+    border: 'border-l-orange-500',
+    icon: AlertTriangle,
+  },
+  inventory_mismatch: {
+    bg: 'bg-rose-50 dark:bg-rose-950/20',
+    text: 'text-rose-600 dark:text-rose-400',
+    border: 'border-l-rose-500',
+    icon: AlertCircle,
+  }
 };
 
 export default function NotificationsPage() {
+  const router = useRouter();
   const [notifications, setNotifications] = useState<any[]>([]);
   const { unreadCount, setUnreadCount, decrementUnread } = useNotificationStore();
   const [loading, setLoading] = useState(true);
@@ -172,10 +204,15 @@ export default function NotificationsPage() {
               <Card
                 key={n.notification_id}
                 hoverable={!n.is_read}
-                onClick={() => !n.is_read && markRead(n.notification_id)}
-                className={`flex items-start gap-4 p-4 border-l-4 transition-all duration-200 ${
+                onClick={() => {
+                  if (!n.is_read) markRead(n.notification_id);
+                  if (n.notification_type === 'admin_message') {
+                    router.push('/dashboard/chat');
+                  }
+                }}
+                className={`flex items-start gap-4 p-4 border-l-4 transition-all duration-200 group ${
                   n.is_read 
-                    ? 'opacity-60 border-l-muted-foreground/30 bg-muted/20' 
+                    ? 'opacity-70 border-l-muted-foreground/30 bg-muted/10 hover:bg-muted/30 hover:opacity-100' 
                     : `${theme.border} bg-card shadow-sm hover:shadow-md cursor-pointer`
                 }`}
               >
@@ -189,18 +226,25 @@ export default function NotificationsPage() {
                       {n.notification_title}
                     </p>
                     {!n.is_read && (
-                      <span className="w-2 h-2 rounded-full bg-primary-600 shrink-0" />
+                      <span className="w-2 h-2 rounded-full bg-primary shrink-0 animate-pulse" />
                     )}
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                  <p className={`mt-1.5 leading-relaxed ${n.is_read ? 'text-xs text-muted-foreground' : 'text-sm text-foreground/90 font-medium'}`}>
                     {n.notification_message}
                   </p>
-                  <p className="text-[10px] text-muted-foreground/60 mt-2 font-mono">
-                    {new Date(n.created_at).toLocaleString('id-ID', {
-                      dateStyle: 'medium',
-                      timeStyle: 'short',
-                    })}
-                  </p>
+                  <div className="flex items-center justify-between mt-3">
+                    <p className="text-[10px] text-muted-foreground/60 font-medium tracking-wide">
+                      {new Date(n.created_at).toLocaleString('id-ID', {
+                        dateStyle: 'long',
+                        timeStyle: 'short',
+                      })}
+                    </p>
+                    {n.notification_type === 'admin_message' && (
+                      <div className="flex items-center text-[10px] font-bold text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+                        Buka Chat <ArrowRight size={12} className="ml-1" />
+                      </div>
+                    )}
+                  </div>
                 </div>
               </Card>
             );

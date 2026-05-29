@@ -5,6 +5,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { categoriesAPI } from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
 import { Spacing, FontSize, BorderRadius } from '../../constants/theme';
+import { checkOnlineStatus } from '../../services/syncService';
+import { getCachedCategories, insertOfflineCategory } from '../../services/db';
 
 export default function CategoryManagementScreen({ navigation }: any) {
   const { colors, isDark } = useTheme();
@@ -24,12 +26,28 @@ export default function CategoryManagementScreen({ navigation }: any) {
 
   const fetchCategories = async () => {
     try {
+      const isOnline = await checkOnlineStatus();
+      if (!isOnline) {
+        const localList = getCachedCategories();
+        setCategories(localList);
+        setFilteredCategories(localList);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+
       const res = await categoriesAPI.list();
       const list = res.data.data || [];
       setCategories(list);
       setFilteredCategories(list);
     } catch (err: any) {
-      Alert.alert('Kesalahan', 'Gagal memuat kategori buku dari server');
+      const localList = getCachedCategories();
+      if (localList.length > 0) {
+        setCategories(localList);
+        setFilteredCategories(localList);
+      } else {
+        Alert.alert('Kesalahan', 'Gagal memuat kategori buku dari server');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -71,6 +89,28 @@ export default function CategoryManagementScreen({ navigation }: any) {
     }
     setSaving(true);
     try {
+      const isOnline = await checkOnlineStatus();
+      if (!isOnline) {
+        if (selectedCategory) {
+          Alert.alert('Mode Offline', 'Mengubah kategori hanya dapat dilakukan saat online.');
+          setSaving(false);
+          return;
+        } else {
+          // Offline category creation: generate temporary negative ID
+          const tempId = -Math.floor(Math.random() * 1000000) - 1;
+          const newOfflineCat = {
+            category_id: tempId,
+            category_name: categoryName.trim(),
+          };
+          insertOfflineCategory(newOfflineCat);
+          Alert.alert('Sukses (Offline)', 'Kategori baru berhasil disimpan secara lokal dan akan disinkronisasi saat online!');
+        }
+        setShowFormModal(false);
+        fetchCategories();
+        setSaving(false);
+        return;
+      }
+
       if (selectedCategory) {
         // Edit Mode
         const res = await categoriesAPI.update(selectedCategory.category_id, { category_name: categoryName.trim() });

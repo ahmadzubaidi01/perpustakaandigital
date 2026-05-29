@@ -35,6 +35,7 @@ export interface CachedStudent {
 export interface CachedCategory {
   category_id: number;
   category_name: string;
+  sync_status?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -161,6 +162,7 @@ export const initDatabase = (): void => {
     addColumnIfNeeded('notifications', 'updated_at', 'TEXT');
     addColumnIfNeeded('notifications', 'deleted_at', 'TEXT');
     addColumnIfNeeded('offline_scans', 'retry_count', 'INTEGER DEFAULT 0');
+    addColumnIfNeeded('categories', 'sync_status', "TEXT DEFAULT 'synced'");
     
     // 1. Create books cache table with updated_at/deleted_at support
     db.execSync(`
@@ -212,6 +214,7 @@ export const initDatabase = (): void => {
       CREATE TABLE IF NOT EXISTS categories (
         category_id INTEGER PRIMARY KEY,
         category_name TEXT NOT NULL,
+        sync_status TEXT DEFAULT 'synced',
         created_at TEXT,
         updated_at TEXT
       );
@@ -776,11 +779,12 @@ export const markBookQrSynced = (bookQrId: number): void => {
 export const cacheCategories = (categories: CachedCategory[]): void => {
   if (!ensureDatabase()) return;
   try {
-    db.runSync('DELETE FROM categories;');
+    // Preserve categories created offline during background sync
+    db.runSync("DELETE FROM categories WHERE sync_status != 'pending';");
     for (const cat of categories) {
       db.runSync(
-        `INSERT OR REPLACE INTO categories (category_id, category_name, created_at, updated_at)
-         VALUES (?, ?, ?, ?);`,
+        `INSERT OR REPLACE INTO categories (category_id, category_name, sync_status, created_at, updated_at)
+         VALUES (?, ?, 'synced', ?, ?);`,
         cat.category_id,
         cat.category_name,
         cat.created_at || new Date().toISOString(),
@@ -800,6 +804,46 @@ export const getCachedCategories = (): CachedCategory[] => {
   } catch (error) {
     handleDatabaseError(error, 'getCachedCategories');
     return [];
+  }
+};
+
+export const insertOfflineCategory = (category: any): void => {
+  if (!ensureDatabase()) return;
+  try {
+    db.runSync(
+      `INSERT INTO categories (category_id, category_name, sync_status, created_at, updated_at)
+       VALUES (?, ?, 'pending', ?, ?);`,
+      category.category_id,
+      category.category_name,
+      new Date().toISOString(),
+      new Date().toISOString()
+    );
+    console.log('[SQLite] Offline category inserted successfully, ID:', category.category_id);
+  } catch (error) {
+    handleDatabaseError(error, 'insertOfflineCategory');
+    throw error;
+  }
+};
+
+export const getPendingOfflineCategories = (): any[] => {
+  if (!ensureDatabase()) return [];
+  try {
+    return db.getAllSync("SELECT * FROM categories WHERE sync_status = 'pending' ORDER BY category_id ASC;") as any[];
+  } catch (error) {
+    handleDatabaseError(error, 'getPendingOfflineCategories');
+    return [];
+  }
+};
+
+export const updateOfflineCategoryId = (oldId: number, newId: number): void => {
+  if (!ensureDatabase()) return;
+  try {
+    db.runSync("UPDATE categories SET category_id = ?, sync_status = 'synced' WHERE category_id = ?;", newId, oldId);
+    db.runSync('UPDATE books SET category_id = ? WHERE category_id = ?;', newId, oldId);
+    console.log(`[SQLite] Reconciled category ID: old=${oldId} -> new=${newId}`);
+  } catch (error) {
+    handleDatabaseError(error, 'updateOfflineCategoryId');
+    throw error;
   }
 };
 

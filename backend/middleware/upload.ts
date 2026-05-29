@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { Request } from 'express';
 import env from '../config/environment';
 import { AppError } from './errorHandler';
+import { logStream } from '../services/logStream';
 
 /**
  * File upload middleware with security validation.
@@ -27,6 +28,13 @@ const storage = multer.diskStorage({
     // Prevent executable extensions
     const dangerousExtensions = ['.exe', '.bat', '.cmd', '.sh', '.ps1', '.msi', '.com', '.vbs', '.js', '.php', '.py', '.rb'];
     if (dangerousExtensions.includes(ext)) {
+      logStream.emitLog({
+        type: 'UPLOAD',
+        message: `Dangerous file upload attempt blocked: ${ext}`,
+        method: _req.method,
+        endpoint: _req.originalUrl,
+        ip: _req.ip || _req.socket?.remoteAddress
+      });
       cb(new AppError('File type not allowed', 400), '');
       return;
     }
@@ -40,6 +48,13 @@ const fileFilter = (_req: Request, file: Express.Multer.File, cb: multer.FileFil
   const allowedMimeTypes = env.UPLOAD_ALLOWED_IMAGE_TYPES;
 
   if (!allowedMimeTypes.includes(file.mimetype)) {
+    logStream.emitLog({
+      type: 'UPLOAD',
+      message: `Invalid MIME type blocked: ${file.mimetype}`,
+      method: _req.method,
+      endpoint: _req.originalUrl,
+      ip: _req.ip || _req.socket?.remoteAddress
+    });
     cb(new AppError(`Invalid file type. Allowed types: ${allowedMimeTypes.join(', ')}`, 400));
     return;
   }
@@ -54,6 +69,13 @@ const fileFilter = (_req: Request, file: Express.Multer.File, cb: multer.FileFil
 
   const allowedExts = mimeToExt[file.mimetype] || [];
   if (!allowedExts.includes(ext)) {
+    logStream.emitLog({
+      type: 'UPLOAD',
+      message: `MIME type mismatch: ${file.mimetype} vs ${ext}`,
+      method: _req.method,
+      endpoint: _req.originalUrl,
+      ip: _req.ip || _req.socket?.remoteAddress
+    });
     cb(new AppError('File extension does not match its MIME type', 400));
     return;
   }
